@@ -103,7 +103,7 @@ label.f { display: flex; flex-direction: column; gap: 6px; font-weight: 500; fon
 .mapinner img { display: block; width: 100%; height: auto; user-select: none; -webkit-user-drag: none; }
 .lot { position: absolute; transform: translate(-50%, -50%); min-width: 24px; height: 16px; padding: 0 2px; border-radius: 4px; font-size: 10px; font-weight: 700;
   line-height: 15px; text-align: center; cursor: pointer; border: 1px solid transparent; }
-.lot.sel { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--red); z-index: 3; }
+.lot.sel { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--blue); z-index: 3; }
 .lot.dim { opacity: .2; }
 .zoom { position: sticky; top: 10px; left: 10px; z-index: 5; display: inline-flex; gap: 6px; margin: 10px; }
 .zoom .btn { box-shadow: 0 2px 8px rgba(0,0,0,.12); }

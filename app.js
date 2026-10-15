@@ -91,11 +91,11 @@ function buydownNote(prog, ms, todayRate) {
 const plan = (name) => D.plans.find((p) => p.name === name);
 
 const ST = {
-  avail: { name: 'Home for sale', bg: '#1F5FD1', fg: '#FFFFFF', bd: '#1F5FD1' },
+  avail: { name: 'Home for sale', bg: '#1E8E3E', fg: '#FFFFFF', bd: '#1E8E3E' },
   spec: { name: 'Spec’d, not started', bg: '#F2B33D', fg: '#1D1F21', bd: '#B9811A' },
   open: { name: 'Open lot', bg: '#FFFFFF', fg: '#1D1F21', bd: '#1D1F21' },
-  sold: { name: 'Sold', bg: '#55585C', fg: '#FFFFFF', bd: '#55585C' },
-  unrel: { name: 'Not released', bg: '#E7E7E3', fg: '#6B6E72', bd: '#B9B9B4' }
+  sold: { name: 'Sold', bg: '#C8373D', fg: '#FFFFFF', bd: '#C8373D' },
+  unrel: { name: 'Not released', bg: '#B4B6B9', fg: '#1D1F21', bd: '#8E9195' }
 };
 const statusOf = (l) => !l ? 'unrel' : (l.c === 'spec' ? (l.ms ? 'avail' : 'spec') : (l.c === 'unreleased' ? 'unrel' : l.c));
 const badge = (s) => `<span class="badge" style="background:${ST[s].bg};color:${ST[s].fg};border-color:${ST[s].bd}">${ST[s].name}</span>`;
@@ -263,8 +263,8 @@ VIEWS.plans = () => {
   const inBand = (v, k) => { const b = PB.bands.find((x) => x.k === k); return b && v >= b.lo && v < b.hi; };
   const chip = (k, v, t) => `<button class="chip ${f[k] === v ? 'on' : ''}" data-a="filt" data-k="${k}" data-v="${v}">${t}</button>`;
   const want = (h) => { const z = parseSize(h.l.size); if (f.beds && (!z || z.bd !== +f.beds)) return false; if (f.ba && (!z || z.ba !== +f.ba)) return false; return !(f.pr && PB && !inBand(h.l.price, f.pr)); };
-  const buildFrom = (p) => p.base ? p.base + minPrem() : 0;
-  const canBuild = (p, c) => !!p.base && (!f.beds || c.beds.includes(+f.beds)) && (!f.ba || c.baths.includes(+f.ba)) && (!f.pr || !PB || inBand(buildFrom(p), f.pr));
+  const buildFrom = (p) => { const mp = p.base ? minPrem(p.name) : null; return mp === null ? 0 : p.base + mp; };
+  const canBuild = (p, c) => buildFrom(p) > 0 && (!f.beds || c.beds.includes(+f.beds)) && (!f.ba || c.baths.includes(+f.ba)) && (!f.pr || !PB || inBand(buildFrom(p), f.pr));
   const narrowed = !!(f.beds || f.ba || f.pr);
   const match = (p) => {
     if (f.st && p.st !== +f.st) return false;
@@ -311,7 +311,11 @@ function cfg(p) {
   return { beds: [...beds].sort((x, y) => x - y), baths: [...baths].sort((x, y) => x - y), bs: p.bs, ts: p.ts };
 }
 const rng = (a) => (a.length > 1 ? `${a[0]}–${a[a.length - 1]}` : String(a[0]));
-const minPrem = () => { const ps = Object.values(lotsData()).filter((l) => l.c === 'open').map((l) => l.prem || 0); return ps.length ? Math.min(...ps) : 0; };
+/* Rear-load plans (garage off the alley) only go on lots 90-105, and those lots only take rear loads. */
+const REAR = { plans: ['Alec', 'Calhoun', 'Jackson'], lo: 90, hi: 105 };
+const fitsLot = (name, n) => { const p = plan(name); return !!p && p.type === 'SF' && REAR.plans.includes(name) === (+n >= REAR.lo && +n <= REAR.hi); };
+const openFor = (name) => Object.entries(lotsData()).filter(([n, l]) => l.c === 'open' && fitsLot(name, n));
+const minPrem = (name) => { const ps = openFor(name).map(([, l]) => l.prem || 0); return ps.length ? Math.min(...ps) : null; };
 function countChips(key, pick, chip) {
   const counts = {};
   D.plans.forEach((p) => pick(cfg(p)).forEach((v) => { counts[v] = (counts[v] || 0) + 1; }));
@@ -344,7 +348,7 @@ VIEWS.plan = (name) => {
   const p = plan(name);
   if (!p) return VIEWS.plans();
   const homes = specsFor(p.name).sort((a, b) => a.l.price - b.l.price);
-  const opens = Object.entries(lotsData()).filter(([, l]) => l.c === 'open').map(([n, l]) => ({ n: +n, l })).sort((a, b) => a.l.prem - b.l.prem);
+  const opens = openFor(p.name).map(([n, l]) => ({ n: +n, l })).sort((a, b) => a.l.prem - b.l.prem);
   const homeRows = homes.map((h) => `<button class="item" data-a="lotgo" data-n="${h.n}"><span class="sw" style="background:${ST[statusOf(h.l)].bg};border-color:${ST[statusOf(h.l)].bd}"></span><b style="width:70px">Lot ${h.n}</b><span class="grow">${esc(h.l.addr)}${parseSize(h.l.size) ? ` <span class="muted small">· ${parseSize(h.l.size).bd} bd · ${parseSize(h.l.size).ba} ba</span>` : ''}</span><b>${money(h.l.price)}</b></button>`).join('');
   return `<div class="app">${top(p.name, { back: 'plans', backLabel: 'Plans', sub: p.type === 'TH' ? 'Townhome' : 'Single-family', right: `<button class="btn primary" data-a="planmap" data-p="${esc(p.name)}">See ${esc(p.name)} lots on the map</button>` })}
   <main class="wrap"><div class="split">
@@ -354,7 +358,7 @@ VIEWS.plan = (name) => {
       <section class="card"><div style="font-size:22px;font-weight:700">${p.sqft} sq ft</div><div>${optLine(cfg(p).beds, cfg(p).bs, 'bed')} · ${optLine(cfg(p).baths, cfg(p).ts, 'bath')}</div><div>${p.st} story · 2-car garage</div><div class="muted small" style="margin-top:4px">${esc(p.note)}</div>
         ${p.base ? `<div style="margin-top:8px">Base price from <b>${money(p.base)}</b> <span class="muted small">(drhorton.com)</span></div>` : ''}</section>
       <section class="card list"><div class="label" style="margin-bottom:6px">${homes.length ? 'For sale now' : 'No ' + esc(p.name) + ' homes for sale right now'}</div>${homeRows}</section>
-      ${p.type === 'SF' && p.base ? `<section class="card list"><div class="label" style="margin-bottom:6px">Build it on an open lot</div>
+      ${p.type === 'SF' && p.base && opens.length ? `<section class="card list"><div class="label" style="margin-bottom:6px">Build it on an open lot${REAR.plans.includes(p.name) ? ` <span style="text-transform:none;letter-spacing:0">· rear load, lots ${REAR.lo}–${REAR.hi} only</span>` : ''}</div>
         ${opens.slice(0, 6).map((o) => `<button class="item" data-a="lotgo" data-n="${o.n}"><span class="sw" style="background:#fff;border-color:#1D1F21"></span><b style="width:70px">Lot ${o.n}</b><span class="grow muted small">+${money(o.l.prem)} lot premium</span><b>${money(p.base + o.l.prem)}</b></button>`).join('')}
         <div class="muted small" style="margin-top:6px">Base + lot premium. Elevation and options change the final price.</div></section>` : ''}
     </aside></div></main></div>`;
@@ -363,7 +367,7 @@ VIEWS.plan = (name) => {
 /* site map */
 VIEWS.map = () => {
   const L = lotsData(), pos = D.pos;
-  const fits = (n) => S.mapPlan === 'All' || (L[n] && L[n].plan === S.mapPlan) || (L[n] && L[n].c === 'open' && plan(S.mapPlan) && plan(S.mapPlan).type === 'SF');
+  const fits = (n) => S.mapPlan === 'All' || (L[n] && L[n].plan === S.mapPlan) || (L[n] && L[n].c === 'open' && fitsLot(S.mapPlan, n));
   const dots = Object.entries(pos).map(([n, xy]) => {
     const l = L[n], s = statusOf(l), st = ST[s];
     if (!S.layers[s]) return '';
@@ -411,10 +415,10 @@ function lotCard(n) {
       ${bd ? `<div><span class="badge" style="background:var(--amber-soft);color:var(--amber-ink)">${bdName()} buydown special</span></div>` : ''}
       <div class="row"><a class="btn" href="#/plan/${encodeURIComponent(l.plan)}">Floor plan</a><button class="btn primary" data-a="paylot" data-n="${n}">Payment compare</button></div>`;
   } else if (s === 'open') {
-    const sf = D.plans.filter((p) => p.type === 'SF' && p.base).sort((a, b) => a.base - b.base);
+    const sf = D.plans.filter((p) => p.type === 'SF' && p.base && fitsLot(p.name, n)).sort((a, b) => a.base - b.base);
     body = `<div style="font-size:19px;font-weight:700">Open lot · choose your plan</div><div>${esc(l.addr)}</div><div>Lot premium <b>${money(l.prem)}</b></div>
       <div class="list">${sf.map((p) => `<button class="item" data-a="payopen" data-n="${n}" data-p="${p.name}"><span class="grow">${p.name}</span><span class="muted small">${money(p.base)} + ${money(l.prem)}</span><b>${money(p.base + l.prem)}</b></button>`).join('')}</div>
-      <div class="muted small">Base + premium. Tap a plan for its payment compare.</div>`;
+      <div class="muted small">Base + premium. Tap a plan for its payment compare.${+n >= REAR.lo && +n <= REAR.hi ? ` Lots ${REAR.lo}–${REAR.hi} are rear load only.` : ''}</div>`;
   } else if (s === 'sold') {
     body = `<div style="font-size:19px;font-weight:700">Sold${l.plan ? ' · ' + esc(l.plan) : ''}</div><div>${esc(l.addr)}</div>`;
   } else {
