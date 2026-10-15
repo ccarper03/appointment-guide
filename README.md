@@ -32,6 +32,13 @@ Open **Settings** from the menu footer.
 
 These changes save on that iPad only. **Reset** puts the built-in values back.
 
+## Passcode
+
+- **Save it.** Safari offers to save the passcode in Passwords when you unlock. Say yes.
+- **Change it yourself.** Settings → Change passcode. Make the file, save `talk-locked.js`, upload it to the
+  `data` folder here on GitHub (Add file → Upload files → Commit). A few minutes later the new passcode works
+  and the old one stops working everywhere.
+
 ## Privacy
 
 - Buyer info stays on the iPad. It is cleared when you tap **Done · clear buyer info**.

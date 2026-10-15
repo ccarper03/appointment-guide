@@ -4,7 +4,7 @@
 'use strict';
 
 const D = window.APP_DATA;
-const CACHE = 'ag-v1';
+const CACHE = 'ag-v2';
 const app = document.getElementById('app');
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = (v) => '$' + Math.round(v).toLocaleString('en-US');
@@ -126,7 +126,8 @@ const top = (title, opts = {}) => `<header class="top">
 function viewLock() {
   return `<div class="lock"><form class="card" id="unlock">
     <div class="label">Appointment guide</div><h1>Collins Ridge</h1>
-    <label class="f">Passcode<input type="password" id="pass" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+    <input type="text" name="username" autocomplete="username" value="Collins Ridge guide" readonly tabindex="-1" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
+    <label class="f">Passcode<input type="password" id="pass" name="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
     <label class="check"><input type="checkbox" id="remember" checked> Remember this device</label>
     <button class="btn primary" type="submit">Unlock</button>
     <div class="muted small" id="lockmsg" role="status"></div></form></div>`;
@@ -440,10 +441,53 @@ VIEWS.settings = () => {
     <section class="card" style="display:flex;flex-direction:column;gap:10px"><b style="font-size:18px">Offline</b>
       <div class="muted small">Saves every screen, image and library PDF on this device for models with weak signal.</div>
       <div class="row"><button class="btn primary" data-a="offline">Save everything for offline</button><span id="offmsg" class="small"></span></div></section>
+    <section class="card" style="display:flex;flex-direction:column;gap:12px"><b style="font-size:18px">Change passcode</b>
+      <div class="muted small">Pick something you’ll remember: at least 8 letters or numbers. Capitals, spaces and dashes don’t count.</div>
+      <form id="newpass" style="display:flex;flex-direction:column;gap:12px;position:relative"><input type="text" name="username" autocomplete="username" value="Collins Ridge guide" readonly tabindex="-1" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
+        <div class="grid g2"><label class="f">New passcode<input type="password" id="np1" name="new-password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+          <label class="f">Type it again<input type="password" id="np2" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></label></div>
+        <div class="row"><button class="btn primary" type="submit">Make the new passcode file</button><button class="btn dark" type="button" data-a="savepassfile" ${S.passFile ? '' : 'disabled'}>Save talk-locked.js</button></div>
+        <div id="npmsg" class="small" role="status">${S.passFile ? 'Ready. Tap Save talk-locked.js.' : ''}</div></form>
+      <ol class="small" style="margin:0;padding-left:20px;line-height:1.7">
+        <li>Make the file, then save talk-locked.js to Files.</li>
+        <li>Open <a href="https://github.com/ccarper03/appointment-guide/upload/main/data" target="_blank" rel="noopener">the guide’s data folder on GitHub</a>, choose talk-locked.js, and tap Commit changes.</li>
+        <li>Wait a few minutes, reload, and unlock with the new passcode. The old one stops working on every device.</li>
+      </ol>
+      <div class="muted small">Safari offers to save the passcode in Passwords when you unlock. Say yes, and clearing the cache won’t lock you out.</div></section>
     <section class="card row"><button class="btn" data-a="lock">Lock and forget passcode on this device</button><span class="muted small">Built ${usDate(D.built)}</span></section>
   </main></div>`;
 };
-AFTER.settings = () => { const f = document.getElementById('csvfile'); if (f) f.addEventListener('change', importCSV); };
+AFTER.settings = () => {
+  const f = document.getElementById('csvfile'); if (f) f.addEventListener('change', importCSV);
+  const np = document.getElementById('newpass'); if (np) np.addEventListener('submit', (e) => { e.preventDefault(); makePassFile(); });
+};
+async function makePassFile() {
+  const msg = document.getElementById('npmsg'), norm = (v) => v.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const a = norm(document.getElementById('np1').value), b = norm(document.getElementById('np2').value);
+  if (a.length < 8) { msg.textContent = 'Use at least 8 letters or numbers.'; return; }
+  if (a !== b) { msg.textContent = 'Those two don’t match.'; return; }
+  msg.textContent = 'Making it…';
+  try {
+    const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+    const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(a), 'PBKDF2', false, ['deriveKey']);
+    const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 310000, hash: 'SHA-256' }, km, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    const plain = JSON.stringify(S.talk);
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain)));
+    const back = new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct));
+    if (back !== plain) throw new Error('round trip');
+    S.passFile = 'window.TALK_LOCKED = ' + JSON.stringify({ salt: b64e(salt), iv: b64e(iv), ct: b64e(ct), iter: 310000 }) + ';\n';
+    rerender();
+  } catch (err) { msg.textContent = 'Couldn’t make the file. Try again.'; }
+}
+async function savePassFile() {
+  const file = new File([S.passFile], 'talk-locked.js', { type: 'text/javascript' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: 'talk-locked.js' }); toast('Saved. Now upload it to GitHub.'); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  const url = URL.createObjectURL(file), el = document.createElement('a');
+  el.href = url; el.download = 'talk-locked.js'; document.body.appendChild(el); el.click(); el.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+  toast('Downloaded talk-locked.js. Now upload it to GitHub.');
+}
 
 /* ---------- guest card + WWREA ---------- */
 const REL = [
@@ -707,6 +751,7 @@ const A = {
   saveagent: () => { LS.set('agent', { name: document.getElementById('a_name').value.trim(), license: document.getElementById('a_lic').value.trim(), firm: document.getElementById('a_firm').value.trim(), rel: Array.from(document.querySelectorAll('.a_rel:checked')).map((x) => x.value) }); toast('Saved'); },
   resetlots: () => { LS.del('lots'); rerender(); toast('Back to built-in lots'); },
   offline: () => saveOffline(),
+  savepassfile: () => { if (S.passFile) savePassFile(); },
   lock: () => { LS.del('k'); S.talk = null; go('menu'); render(); }
 };
 function confirmCancel() { const g = S.guest; return !g || (!g.f1 && !g.l1) || window.confirm('Clear this guest card?'); }
