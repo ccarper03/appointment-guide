@@ -257,15 +257,17 @@ VIEWS.talk = () => {
 };
 
 /* find a home: plans */
+/* A home for sale that's under construction: build milestone M1-M13 (blank = spec'd, not started). */
+const underway = (l) => !!l && l.c === 'spec' && +l.ms >= 1 && +l.ms <= 13;
 const specsFor = (name) => Object.entries(lotsData()).filter(([, l]) => l.c === 'spec' && l.plan === name).map(([n, l]) => ({ n: +n, l }));
 VIEWS.plans = () => {
   const f = S.f, PB = priceBands();
   const inBand = (v, k) => { const b = PB.bands.find((x) => x.k === k); return b && v >= b.lo && v < b.hi; };
   const chip = (k, v, t) => `<button class="chip ${f[k] === v ? 'on' : ''}" data-a="filt" data-k="${k}" data-v="${v}">${t}</button>`;
-  const want = (h) => { const z = parseSize(h.l.size); if (f.beds && (!z || z.bd !== +f.beds)) return false; if (f.ba && (!z || z.ba !== +f.ba)) return false; return !(f.pr && PB && !inBand(h.l.price, f.pr)); };
+  const want = (h) => { const z = parseSize(h.l.size); if (f.ms && !underway(h.l)) return false; if (f.beds && (!z || z.bd !== +f.beds)) return false; if (f.ba && (!z || z.ba !== +f.ba)) return false; return !(f.pr && PB && !inBand(h.l.price, f.pr)); };
   const buildFrom = (p) => { const mp = p.base ? minPrem(p.name) : null; return mp === null ? 0 : p.base + mp; };
-  const canBuild = (p, c) => buildFrom(p) > 0 && (!f.beds || c.beds.includes(+f.beds)) && (!f.ba || c.baths.includes(+f.ba)) && (!f.pr || !PB || inBand(buildFrom(p), f.pr));
-  const narrowed = !!(f.beds || f.ba || f.pr);
+  const canBuild = (p, c) => !f.ms && buildFrom(p) > 0 && (!f.beds || c.beds.includes(+f.beds)) && (!f.ba || c.baths.includes(+f.ba)) && (!f.pr || !PB || inBand(buildFrom(p), f.pr));
+  const narrowed = !!(f.beds || f.ba || f.pr || f.ms);
   const match = (p) => {
     if (f.st && p.st !== +f.st) return false;
     if (f.pd === '1' && !p.pd) return false;
@@ -298,6 +300,7 @@ VIEWS.plans = () => {
     <span class="label">First floor</span>${chip('pd', '1', 'Primary down')}${chip('b1', '1', 'Any bedroom')}
     <span class="label">Type</span>${chip('ty', 'SF', 'Single-family')}${chip('ty', 'TH', 'Townhome')}
     ${PB ? `<span class="label">Price</span>${pchips}` : ''}
+    <span style="display:inline-flex;gap:10px;align-items:center"><span class="label">Stage</span>${chip('ms', '1', `Under construction · M1–M13<span class="ct">${Object.values(lotsData()).filter(underway).length}</span>`)}</span>
     ${Object.values(f).some(Boolean) ? '<button class="btn small" data-a="filtclear">Clear</button>' : ''}
   </div>
   <main class="wrap"><div class="muted">${list.length} of ${D.plans.length} plans match. Tap a plan to see the floor plan and its lots.</div><div class="grid g4">${cards}</div></main></div>`;
@@ -370,13 +373,14 @@ VIEWS.map = () => {
   const planFits = (n) => S.mapPlan === 'All' || (L[n] && L[n].plan === S.mapPlan) || (L[n] && L[n].c === 'open' && fitsLot(S.mapPlan, n));
   // Stage (build milestone) filter: only homes for sale have one; 'none' = spec'd but not started
   const msOf = (l) => (l && l.c === 'spec' ? (l.ms || 'none') : null);
-  const msFits = (n) => S.mapMs === 'All' || msOf(L[n]) === S.mapMs;
+  const msFits = (n) => S.mapMs === 'All' || (S.mapMs === 'built' ? underway(L[n]) : msOf(L[n]) === S.mapMs);
   const fits = (n) => planFits(n) && msFits(n);
   const msCount = {}; Object.entries(L).forEach(([n, l]) => { const m = msOf(l); if (m && planFits(n)) msCount[m] = (msCount[m] || 0) + 1; });
   const msKeys = Object.keys(msCount).sort((a, b) => (a === 'none' ? -1 : b === 'none' ? 1 : +a - +b));
-  if (S.mapMs !== 'All' && !msCount[S.mapMs]) msKeys.push(S.mapMs);
+  if (S.mapMs !== 'All' && S.mapMs !== 'built' && !msCount[S.mapMs]) msKeys.push(S.mapMs);
+  const builtCount = Object.entries(L).filter(([n, l]) => underway(l) && planFits(n)).length;
   const msChip = (k, label, ct) => `<button class="chip dark ${S.mapMs === k ? 'on' : ''}" data-a="mms" data-k="${k}" style="min-height:36px;font-size:14px">${label}${ct != null ? `<span class="ct">${ct}</span>` : ''}</button>`;
-  const stages = msChip('All', 'All stages') + msKeys.map((k) => msChip(k, k === 'none' ? 'Not started' : 'M' + k, msCount[k] || 0)).join('');
+  const stages = msChip('All', 'All stages') + msChip('built', 'M1–M13', builtCount) + msKeys.map((k) => msChip(k, k === 'none' ? 'Not started' : 'M' + k, msCount[k] || 0)).join('');
   const dots = Object.entries(pos).map(([n, xy]) => {
     const l = L[n], s = statusOf(l), st = ST[s];
     if (!S.layers[s]) return '';
