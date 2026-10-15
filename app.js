@@ -4,7 +4,7 @@
 'use strict';
 
 const D = window.APP_DATA;
-const CACHE = 'ag-v4';
+const CACHE = 'ag-v5';
 const app = document.getElementById('app');
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = (v) => '$' + Math.round(v).toLocaleString('en-US');
@@ -278,7 +278,7 @@ function priceBands() {
     { k: 'hi', lo: c2, hi: Infinity, t: k(c2) + '+', n: count(c2, Infinity) }
   ] };
 }
-function optLine(all, std, word) { const o = all.filter((v) => v !== std); return `${std} ${word} standard${o.length ? ` <span class="muted">· ${o.join(' or ')} with options</span>` : ''}`; }
+function optLine(all, std, word) { const o = all.filter((v) => v !== std); return o.length ? `${std} ${word} standard <span class="muted">· ${o.join(' or ')} with options</span>` : `${std} ${word}`; }
 function fromPrice(p) { const homes = specsFor(p.name); const m = homes.length ? Math.min(...homes.map((h) => h.l.price)) : 0; return Math.min(m || Infinity, p.base || Infinity) === Infinity ? 0 : Math.min(m || Infinity, p.base || Infinity); }
 
 VIEWS.plan = (name) => {
