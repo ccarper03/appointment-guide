@@ -737,7 +737,7 @@ async function importCSV(e) {
     msg.textContent = `Imported ${Object.keys(best).length} lots from homesales. ${changed} changed.`;
   } else if (rows.length && 'Lot #' in rows[0]) {
     let n = 0;
-    rows.forEach((r) => { const k = String(+r['Lot #']); if (cur[k] && cur[k].c === 'spec') { cur[k].ms = r.Milestone || ''; cur[k].price = Math.round(+r.Price || cur[k].price); cur[k].size = `${r.Beds} bd · ${r.Baths} ba · ${(+r.Sqft).toLocaleString('en-US')} sq ft`; n++; } });
+    rows.forEach((r) => { const k = String(+r['Lot #']); if (cur[k] && cur[k].c === 'spec') { cur[k].ms = r.Milestone || ''; cur[k].price = Math.round(+r.Price || cur[k].price); const fx = (D.sizeFix || {})[cur[k].plan] || [r.Beds, r.Baths]; cur[k].size = `${fx[0]} bd · ${fx[1]} ba · ${(+r.Sqft).toLocaleString('en-US')} sq ft`; n++; } });
     LS.set('lots', { asOf: lotsAsOf(), lots: cur });
     msg.textContent = `Updated build stages and prices on ${n} homes from the inventory pull.`;
   } else {
