@@ -4,7 +4,7 @@
 'use strict';
 
 const D = window.APP_DATA;
-const CACHE = 'ag-v2';
+const CACHE = 'ag-v3';
 const app = document.getElementById('app');
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = (v) => '$' + Math.round(v).toLocaleString('en-US');
@@ -200,7 +200,8 @@ VIEWS.talk = () => {
 /* find a home: plans */
 const specsFor = (name) => Object.entries(lotsData()).filter(([, l]) => l.c === 'spec' && l.plan === name).map(([n, l]) => ({ n: +n, l }));
 VIEWS.plans = () => {
-  const f = S.f;
+  const f = S.f, PB = priceBands();
+  const inBand = (v, k) => { const b = PB.bands.find((x) => x.k === k); return b && v >= b.lo && v < b.hi; };
   const chip = (k, v, t) => `<button class="chip ${f[k] === v ? 'on' : ''}" data-a="filt" data-k="${k}" data-v="${v}">${t}</button>`;
   const match = (p) => {
     if (f.beds && p.bmax < +f.beds) return false;
@@ -208,33 +209,50 @@ VIEWS.plans = () => {
     if (f.pd === '1' && !p.pd) return false;
     if (f.b1 === '1' && !p.b1) return false;
     if (f.ty && p.type !== f.ty) return false;
-    const from = fromPrice(p);
-    if (f.pr === 'lo' && !(from && from < 450000)) return false;
-    if (f.pr === 'mid' && !(from >= 450000 && from < 500000)) return false;
-    if (f.pr === 'hi' && !(from >= 500000)) return false;
+    if (f.pr && PB) { const inR = specsFor(p.name).some((h) => inBand(h.l.price, f.pr)); if (!inR && !(p.base && !specsFor(p.name).length && inBand(p.base, f.pr))) return false; }
     return true;
   };
   const list = D.plans.filter(match);
   const cards = list.map((p) => {
-    const homes = specsFor(p.name);
-    const avail = homes.length ? `${homes.length} home${homes.length > 1 ? 's' : ''} for sale · from ${money(Math.min(...homes.map((h) => h.l.price)))}` : (p.base ? `Build on an open lot · from ${money(p.base)}` : 'No homes for sale right now');
+    const all = specsFor(p.name), homes = f.pr && PB ? all.filter((h) => inBand(h.l.price, f.pr)) : all;
+    const avail = homes.length ? `${homes.length} home${homes.length > 1 ? 's' : ''} for sale${f.pr ? ' in this range' : ''} · from ${money(Math.min(...homes.map((h) => h.l.price)))}` : (p.base ? `Build on an open lot · from ${money(p.base)}` : 'No homes for sale right now');
     return `<a class="card plancard" href="#/plan/${encodeURIComponent(p.name)}" style="text-decoration:none;color:inherit;display:flex;flex-direction:column;gap:8px">
       <img src="${p.elev}" alt="${esc(p.name)} elevations" loading="lazy">
       <div class="row"><b style="font-size:20px">${esc(p.name)}</b><span class="grow"></span><span class="label">${p.type === 'TH' ? 'Townhome' : 'Single-family'}</span></div>
       <div>${p.sqft} sq ft · ${p.bmin === p.bmax ? p.bmin : p.bmin + '–' + p.bmax} bd · ${p.ba} ba · ${p.st} story</div>
       <div class="muted small">${esc(p.note)}</div><div style="font-weight:650">${avail}</div></a>`;
   }).join('');
+  const pchips = PB ? PB.bands.map((b) => chip('pr', b.k, `${b.t}<span class="ct" aria-label="${b.n} homes">${b.n}</span>`)).join('') : '';
   return `<div class="app">${top('Find a home', { back: 'menu', right: `<a class="btn" href="#/map">Site map →</a>` })}
   <div class="card" style="border-radius:0;border-left:0;border-right:0;display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center">
     <span class="label">Beds</span>${chip('beds', '3', '3+')}${chip('beds', '4', '4+')}${chip('beds', '5', '5')}
     <span class="label">Stories</span>${chip('st', '1', '1')}${chip('st', '2', '2')}
     <span class="label">First floor</span>${chip('pd', '1', 'Primary down')}${chip('b1', '1', 'Any bedroom')}
     <span class="label">Type</span>${chip('ty', 'SF', 'Single-family')}${chip('ty', 'TH', 'Townhome')}
-    <span class="label">From</span>${chip('pr', 'lo', 'Under $450K')}${chip('pr', 'mid', '$450–500K')}${chip('pr', 'hi', '$500K+')}
+    ${PB ? `<span class="label">Price</span>${pchips}` : ''}
     ${Object.values(f).some(Boolean) ? '<button class="btn small" data-a="filtclear">Clear</button>' : ''}
   </div>
   <main class="wrap"><div class="muted">${list.length} of ${D.plans.length} plans match. Tap a plan to see the floor plan and its lots.</div><div class="grid g4">${cards}</div></main></div>`;
 };
+/* Price chips split the homes for sale into thirds, so each chip always has homes in it as inventory changes. */
+function priceBands() {
+  const prices = Object.values(lotsData()).filter((l) => l.c === 'spec' && l.price).map((l) => l.price).sort((a, b) => a - b);
+  const n = prices.length;
+  if (n < 3) return null;
+  const cut = (k) => {
+    const lo = prices[k - 1], hi = prices[k], mid = (lo + hi) / 2;
+    for (const step of [5000, 1000]) { const b = Math.round(mid / step) * step; if (b > lo && b <= hi) return b; }
+    return hi;
+  };
+  const c1 = cut(Math.round(n / 3)), c2 = cut(Math.round(2 * n / 3));
+  const k = (v) => '$' + Math.round(v / 1000) + 'K';
+  const count = (lo, hi) => prices.filter((v) => v >= lo && v < hi).length;
+  return { bands: [
+    { k: 'lo', lo: 0, hi: c1, t: 'Under ' + k(c1), n: count(0, c1) },
+    { k: 'mid', lo: c1, hi: c2, t: `${k(c1).slice(0, -1)}–${k(c2).slice(1)}`, n: count(c1, c2) },
+    { k: 'hi', lo: c2, hi: Infinity, t: k(c2) + '+', n: count(c2, Infinity) }
+  ] };
+}
 function fromPrice(p) { const homes = specsFor(p.name); const m = homes.length ? Math.min(...homes.map((h) => h.l.price)) : 0; return Math.min(m || Infinity, p.base || Infinity) === Infinity ? 0 : Math.min(m || Infinity, p.base || Infinity); }
 
 VIEWS.plan = (name) => {

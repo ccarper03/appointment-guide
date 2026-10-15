@@ -139,3 +139,5 @@ table.bd td:last-child { text-align: right; }
 .hold { position: relative; overflow: hidden; }
 .hold i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgba(255,255,255,.25); }
 .hold.go i { width: 100%; transition: width .9s linear; }
+
+.chip .ct { margin-left: 8px; font-size: 13px; font-weight: 700; opacity: .65; }
