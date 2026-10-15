@@ -125,6 +125,54 @@ label.f { display: flex; flex-direction: column; gap: 6px; font-weight: 500; fon
 table.bd { width: 100%; border-collapse: collapse; font-size: 14px; }
 table.bd td { padding: 4px 0; border-top: 1px solid var(--line2); }
 table.bd td:last-child { text-align: right; }
+
+/* 2/1 buydown block on the loan cards */
+.est.bdn { background: var(--amber-soft); color: var(--amber-ink); }
+table.ladder { width: 100%; border-collapse: collapse; margin: 6px 0 2px; }
+table.ladder td { padding: 3px 0; font-size: 16px; }
+table.ladder td:last-child { text-align: right; font-size: 20px; font-weight: 700; color: var(--ink); }
+
+/* What the incentive is worth: chart colors validated (blue / orange, gray for context) */
+.vpanel { --v-b: #2a78d6; --v-o: #eb6834; --v-g: #898781; display: flex; flex-direction: column; gap: 14px; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.kpis:has(> .kpi:nth-child(3):last-child) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 900px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .kpis:has(> .kpi:nth-child(3):last-child) { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .kpis, .kpis:has(> .kpi:nth-child(3):last-child) { grid-template-columns: minmax(0, 1fr); } }
+.kpi { background: var(--bg); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+.kpi-l { font-size: 14px; color: var(--muted); }
+.kpi-v { font-size: 28px; font-weight: 650; line-height: 1.15; color: var(--ink); }
+.kpi-s { font-size: 13px; color: var(--muted); }
+.vlegend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 14px; color: var(--ink2); }
+.vlegend > span { display: inline-flex; align-items: center; gap: 8px; }
+.key { display: inline-block; width: 18px; height: 3px; border-radius: 2px; flex: none; vertical-align: middle; margin-right: 8px; }
+.vlegend .key { margin-right: 0; }
+.key.g { background: var(--v-g); } .key.b { background: var(--v-b); } .key.o { background: var(--v-o); }
+.vchart { position: relative; touch-action: pan-y; }
+.vchart svg { display: block; width: 100%; height: auto; outline: none; }
+.vchart svg:focus-visible { box-shadow: 0 0 0 3px var(--blue-soft); border-radius: 8px; }
+.vchart .gl { stroke: var(--line2); stroke-width: 1; }
+.vchart .ax { stroke: var(--line); stroke-width: 1; }
+.vchart .tk { font-size: 13px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.vchart .ln { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.vchart .ln.g { stroke: var(--v-g); } .vchart .ln.b { stroke: var(--v-b); } .vchart .ln.o { stroke: var(--v-o); }
+.vchart .wash { stroke: none; opacity: .10; } .vchart .wash.b { fill: var(--v-b); } .vchart .wash.o { fill: var(--v-o); }
+.vchart .dl { font-size: 13px; fill: var(--ink2); font-weight: 600; }
+.vchart .kl { font-size: 15px; fill: var(--ink); font-weight: 650; }
+.vchart .cross { stroke: var(--muted); stroke-width: 1; }
+.vchart .dot { stroke: #fff; stroke-width: 2; } .vchart .dot.g { fill: var(--v-g); } .vchart .dot.b { fill: var(--v-b); } .vchart .dot.o { fill: var(--v-o); }
+.vtip { position: absolute; z-index: 5; min-width: 200px; background: var(--surf); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 18px rgba(0,0,0,.10); padding: 10px 12px; font-size: 14px; pointer-events: none; }
+.vt-h { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.vt-r { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.vt-r b { font-size: 16px; min-width: 64px; } .vt-r span { color: var(--muted); }
+.vt-r .key { margin-right: 0; }
+.vt-k { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line2); font-weight: 650; }
+table.vtable { width: 100%; border-collapse: collapse; font-size: 15px; }
+table.vtable th, table.vtable td { padding: 7px 6px; border-top: 1px solid var(--line2); text-align: right; font-variant-numeric: tabular-nums; }
+table.vtable th[scope="row"] { text-align: left; font-weight: 500; }
+table.vtable thead th { border-top: 0; font-size: 13px; color: var(--muted); font-weight: 600; }
+table.vtable thead th:first-child { text-align: left; }
+table.vtable tr.keep th, table.vtable tr.keep td { font-weight: 700; }
+.bfcm { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; background: var(--bg); border-radius: 12px; }
 .legal { font-size: 11px; line-height: 1.5; color: var(--ink2); white-space: pre-line; }
 
 /* guest card + signatures */

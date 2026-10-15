@@ -13,7 +13,9 @@ Live at `charlescarper.com/appointment-guide/` (hidden, not indexed).
 - **Find a home.** Filter plans, open a floor plan, see the homes for sale and the open lots for it.
 - **Site map.** Every lot in this phase by status. Toggle each status, filter by plan, sort by price or lot.
 - **Payment compare.** FHA 3.5%, Conventional 5/10/20%, VA. Today's rate vs. the BFC rate, shown as a range,
-  with the monthly gap. Same method as the drhorton.com calculator.
+  with the monthly gap. Same method as the drhorton.com calculator. Homes with the 2/1 buydown show year 1, year 2 and
+  years 3–30. "What the incentive is worth" charts the first five years against today's rate, with what the buyer
+  keeps and the incentive as a price cut.
 - **Guest card + WWREA.** The buyer fills it in and signs on the iPad. You press and hold to take it back,
   check the relationship box, then Save to Files. The PDF is named
   `WWREA - Last, First (& Second) - YYYY-MM-DD.pdf`.
@@ -25,7 +27,8 @@ Open **Settings** from the menu footer.
 | What changed | Where |
 |---|---|
 | Today's rates | Rates: copy Conventional, FHA and VA from the drhorton.com calculator on any home. |
-| BFC rates or lists | Rates: the four BFC rates and the lot numbers on each list. |
+| BFC rates or lists | Builder rates (BFC) by closing month: FHA, VA and Conv rates plus the lots on each month's list. The next 3 months show on their own and roll forward; a new month shows up blank until you fill it. |
+| 2/1 buydown special | 2/1 buydown: the lot(s), the note rate per program (blank uses the home's BFC rate), and the close-by date. |
 | Lot statuses | Update lots: import the CSV from the homesales console snippet. |
 | Build stages, prices | Update lots: import your inventory pull CSV. |
 | Agent box on the WWREA | WWREA agent section: name, license, firm, default relationship box. |

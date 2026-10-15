@@ -30,7 +30,7 @@ const S = {
   f: {}, mapPlan: 'All', layers: { avail: true, spec: true, open: true, sold: true, unrel: true },
   sel: null, zoom: 1.5, sort: 'price', planZoom: 1,
   ansCat: 'All', q: '',
-  pay: { lot: null, price: null, label: '', routes: ['F035', 'C05', 'C20'], bd: false },
+  pay: { lot: null, price: null, label: '', routes: ['F035', 'C05', 'C20'], bd: false, inc: '', vk: null },
   guest: null, pdf: null, pdfName: ''
 };
 
@@ -38,14 +38,52 @@ const S = {
 const lotsData = () => { const o = LS.get('lots', null); return o && o.lots ? o.lots : D.lots; };
 const lotsAsOf = () => { const o = LS.get('lots', null); return o && o.asOf ? o.asOf : D.lotsAsOf; };
 const rates = () => { const o = LS.get('rates', null); return o && o.conv ? o : D.rates; };
-const bfcLists = () => {
-  const o = LS.get('bfcLots', null);
-  if (o) return o;
-  const out = { novdec: [], jan: [] };
-  Object.entries(D.lots).forEach(([n, l]) => { if (l.bfc) out[l.bfc].push(+n); });
+
+/* Builder rates (BFC) by closing month. The window is the next 3 months and rolls forward on its own:
+   a month that passes drops off, and the new month shows up blank until it's filled in Settings. */
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const ymKey = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+const monName = (k, long) => { const [y, m] = String(k).split('-').map(Number); return long ? `${MONL[m - 1]} ${y}` : MON[m - 1]; };
+const PROGS = [['fha', 'FHA'], ['va', 'VA'], ['conv', 'Conv']];
+const hasRate = (v) => v !== null && v !== undefined && v !== '' && !isNaN(+v);
+function bfcStore() {
+  const o = LS.get('bfc', null);
+  if (o && o.months) return o;
+  const out = { months: JSON.parse(JSON.stringify(D.bfc || {})), thisMonth: false };
+  // carry over Nov/Dec and Jan values saved on this device before months were added
+  const old = LS.get('rates', null), oldLots = LS.get('bfcLots', null);
+  const put = (k, src, lots) => { const m = out.months[k] || (out.months[k] = { fha: null, va: null, conv: null, lots: [] }); if (src) { m.fha = src.govt; m.va = src.govt; m.conv = src.conv; } if (lots) m.lots = lots; };
+  if (old && old.novdec) { put('2026-11', old.novdec); put('2026-12', old.novdec); put('2027-01', old.jan); }
+  if (oldLots) { put('2026-11', null, oldLots.novdec); put('2026-12', null, oldLots.novdec); put('2027-01', null, oldLots.jan); }
   return out;
-};
-const bfcOf = (n) => { const b = bfcLists(); return b.novdec.includes(+n) ? 'novdec' : (b.jan.includes(+n) ? 'jan' : ''); };
+}
+function bfcWindow() {
+  const o = bfcStore(), now = new Date(), out = [];
+  for (let i = o.thisMonth ? 0 : 1; i <= 3; i++) {
+    const k = ymKey(new Date(now.getFullYear(), now.getMonth() + i, 1));
+    const m = o.months[k] || {};
+    out.push({ k, fha: m.fha ?? null, va: m.va ?? null, conv: m.conv ?? null, lots: m.lots || [] });
+  }
+  return out;
+}
+/* The window months whose list includes this lot (earliest first), or null. */
+const bfcFor = (n) => { if (n == null) return null; const ms = bfcWindow().filter((m) => m.lots.includes(+n)); return ms.length ? ms : null; };
+/* The builder rate for one program (fha / va / conv): the earliest listed month that has a rate for it. */
+const bfcRate = (ms, prog) => { for (const m of ms || []) if (hasRate(m[prog])) return { rate: +m[prog], k: m.k }; return null; };
+const monthsText = (ms) => ms.map((m) => monName(m.k)).join(' or ');
+const monthsLong = (ms) => ms.map((m) => MONL[+m.k.split('-')[1] - 1]).join(' or ');
+
+/* 2/1 buydown special: usually one home. Year 1 is 2 points under the note rate, year 2 is 1 point under,
+   years 3-30 at the note rate. The builder funds the difference in principal + interest. */
+const buydown = () => { const o = LS.get('buydown', null); return o && o.lots ? o : (D.buydown || { lots: [] }); };
+const onBuydown = (n) => n != null && (buydown().lots || []).includes(+n);
+function buydownNote(prog, ms, todayRate) {
+  const b = buydown();
+  if (hasRate(b[prog])) return { rate: +b[prog], from: 'special' };
+  const r = bfcRate(ms, prog);
+  return r ? { rate: r.rate, from: 'bfc', k: r.k } : { rate: todayRate, from: 'today' };
+}
 const plan = (name) => D.plans.find((p) => p.name === name);
 
 const ST = {
@@ -77,7 +115,19 @@ function estimate(price, code, ratePct, th) {
   const high = total + 0.10 * (tax + ins) + 0.25 * mi;
   return { down, loan, pi, tax, ins, mi, hoa, total, high, rate: ratePct };
 }
-window.__payTest = { estimate, pmt, LT };
+/* 2/1 temporary buydown on the same loan: years 1 and 2 are paid as if the rate were 2 and 1 points lower;
+   the builder-funded cost is the principal + interest gap for those 24 months. */
+function buydownPlan(price, code, note, th) {
+  const y1 = estimate(price, code, Math.max(note - 2, 0), th), y2 = estimate(price, code, Math.max(note - 1, 0), th), y3 = estimate(price, code, note, th);
+  return { y1, y2, y3, note, fund: 12 * (y3.pi - y1.pi) + 12 * (y3.pi - y2.pi) };
+}
+/* The price that gives the same estimated monthly payment at another rate (for "like a price cut of"). */
+function priceForPayment(total, code, ratePct, th) {
+  let lo = 0, hi = 5e6;
+  for (let i = 0; i < 60; i++) { const mid = (lo + hi) / 2; if (estimate(mid, code, ratePct, th).total > total) hi = mid; else lo = mid; }
+  return lo;
+}
+window.__payTest = { estimate, pmt, LT, buydownPlan, priceForPayment };
 
 /* ---------- unlock ---------- */
 const b64d = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
@@ -344,10 +394,12 @@ function lotCard(n) {
   if (!l) return '';
   let body = '';
   if (s === 'avail' || s === 'spec') {
-    const b = bfcOf(n), r = rates();
+    const ms = bfcFor(n), bd = onBuydown(n);
+    const rl = ms ? PROGS.map(([p, nm]) => { const x = bfcRate(ms, p); return x ? `${nm} ${pct(x.rate)}` : ''; }).filter(Boolean).join(' · ') : '';
     body = `<div style="font-size:19px;font-weight:700">${esc(l.plan)}</div><div>${esc(l.addr)}</div><div class="muted">${esc(l.size)}</div>
       <div class="row"><span style="font-size:24px;font-weight:700">${money(l.price)}</span><span class="muted small">${l.ms ? 'Stage M' + esc(l.ms) : 'Not started'}</span></div>
-      <div class="small">${b ? `BFC: ${b === 'novdec' ? 'Nov/Dec' : 'Jan'} closing · ${r[b].govt}% govt / ${r[b].conv}% conv` : '<span class="muted">Not on a BFC list</span>'}</div>
+      <div class="small">${ms ? `BFC: ${monthsText(ms)} closing${rl ? ' · ' + rl : ' · rate not set yet'}` : '<span class="muted">Not on a BFC list</span>'}</div>
+      ${bd ? '<div><span class="badge" style="background:var(--amber-soft);color:var(--amber-ink)">2/1 buydown special</span></div>' : ''}
       <div class="row"><a class="btn" href="#/plan/${encodeURIComponent(l.plan)}">Floor plan</a><button class="btn primary" data-a="paylot" data-n="${n}">Payment compare</button></div>`;
   } else if (s === 'open') {
     const sf = D.plans.filter((p) => p.type === 'SF' && p.base).sort((a, b) => a.base - b.base);
@@ -363,29 +415,64 @@ function lotCard(n) {
 }
 
 /* payment compare */
-VIEWS.pay = () => {
-  const L = lotsData(), r = rates();
-  let price = S.pay.price, label = S.pay.label, th = false, bfc = '';
+function payContext() {
+  const L = lotsData();
+  const c = { price: S.pay.price, label: S.pay.label, th: false, ms: null, bd: false, lot: null, custom: false };
   if (S.pay.lot && L[S.pay.lot] && L[S.pay.lot].c === 'spec') {
-    const l = L[S.pay.lot]; price = l.price; label = `Lot ${S.pay.lot} · ${l.plan} · ${l.addr}`; th = !!l.th; bfc = bfcOf(S.pay.lot);
+    const l = L[S.pay.lot];
+    Object.assign(c, { lot: S.pay.lot, price: l.price, label: `Lot ${S.pay.lot} · ${l.plan} · ${l.addr}`, th: !!l.th, ms: bfcFor(S.pay.lot), bd: onBuydown(S.pay.lot) });
+  } else if (c.price) {
+    // custom price: apply a builder rate by hand
+    c.custom = true;
+    if (S.pay.inc === 'bd') c.bd = true;
+    else if (S.pay.inc) { const m = bfcWindow().find((x) => x.k === S.pay.inc); if (m) c.ms = [m]; }
   }
+  return c;
+}
+function payOptions(c, k) {
+  const t = LT[k], tr = rates()[t.rate];
+  const today = estimate(c.price, k, tr, c.th);
+  const b = c.ms ? bfcRate(c.ms, t.rate) : null;
+  const bfc = b ? { rate: b.rate, k: b.k, e: estimate(c.price, k, b.rate, c.th) } : null;
+  let bdp = null;
+  if (c.bd) { const nt = buydownNote(t.rate, c.ms, tr); bdp = Object.assign(buydownPlan(c.price, k, nt.rate, c.th), { from: nt.from, k: nt.k }); }
+  return { tr, today, bfc, bdp };
+}
+const rangeOf = (e) => `${money(e.total)} – ${money(Math.ceil(e.high / 10) * 10)}`;
+function noteSource(bdp) {
+  if (bdp.from === 'special') return '';
+  return bdp.from === 'bfc' ? `Note rate is this home’s ${monName(bdp.k)} BFC rate. Set the special’s own rate in Settings if it’s different.` : 'Note rate is today’s rate. Set the special’s rate in Settings.';
+}
+VIEWS.pay = () => {
+  const L = lotsData(), r = rates(), c = payContext(), price = c.price;
   const specs = Object.entries(L).filter(([, l]) => l.c === 'spec').sort((a, b) => a[1].price - b[1].price);
   const picker = `<select id="paypick" aria-label="Choose a home"><option value="">Choose a home…</option>
-    ${specs.map(([n, l]) => `<option value="${n}" ${String(S.pay.lot) === n ? 'selected' : ''}>Lot ${n} · ${esc(l.plan)} · ${money(l.price)}</option>`).join('')}
+    ${specs.map(([n, l]) => `<option value="${n}" ${String(S.pay.lot) === n ? 'selected' : ''}>Lot ${n} · ${esc(l.plan)} · ${money(l.price)}${onBuydown(n) ? ' · 2/1 buydown' : ''}</option>`).join('')}
     <option value="custom" ${!S.pay.lot && price ? 'selected' : ''}>Custom price</option></select>`;
   const chips = Object.keys(LT).map((k) => `<button class="chip ${S.pay.routes.includes(k) ? 'on' : ''}" data-a="route" data-k="${k}">${LT[k].label.replace(' Down', '')}</button>`).join('');
+  const win = bfcWindow().filter((m) => PROGS.some(([p]) => hasRate(m[p])));
+  const incPick = c.custom ? `<label class="f small" style="max-width:520px">Builder rate for this price<select id="payinc"><option value="">None · today’s rate only</option>
+    ${win.map((m) => `<option value="${m.k}" ${S.pay.inc === m.k ? 'selected' : ''}>BFC · ${monName(m.k, true)} closing</option>`).join('')}
+    <option value="bd" ${S.pay.inc === 'bd' ? 'selected' : ''}>2/1 buydown</option></select></label>` : '';
+  const bdo = buydown();
+  const badges = (c.ms ? ` <span class="badge" style="background:var(--blue-soft);color:var(--blue-ink)">BFC · ${monthsText(c.ms)} closing</span>` : '')
+    + (c.bd ? ` <span class="badge" style="background:var(--amber-soft);color:var(--amber-ink)">2/1 buydown${bdo.closeBy && !c.custom ? ' · close by ' + esc(usDate(bdo.closeBy)) : ''}</span>` : '');
   let cards = '<div class="card muted">Pick a home or enter a price.</div>';
   if (price) {
     cards = `<div class="grid ${S.pay.routes.length > 2 ? 'g3' : 'g2'}">` + S.pay.routes.map((k) => {
-      const t = LT[k], mr = r[t.rate], m = estimate(price, k, mr, th);
-      const br = bfc ? r[bfc][t.kind] : null, b = br ? estimate(price, k, br, th) : null;
-      const gap = b ? m.pi - b.pi : 0;
+      const t = LT[k], o = payOptions(c, k), m = o.today, b = o.bfc, bp = o.bdp;
       const bd = (e) => `<table class="bd"><tr><td>Principal + interest</td><td>${money(e.pi)}</td></tr><tr><td>Property tax</td><td>${money(e.tax)}</td></tr><tr><td>Home insurance</td><td>${money(e.ins)}</td></tr>
         <tr><td>Mortgage insurance</td><td>${money(e.mi)}</td></tr><tr><td>HOA</td><td>${money(e.hoa)}</td></tr><tr><td><b>Estimate</b></td><td><b>${money(e.total)}</b></td></tr></table>`;
-      return `<section class="card route"><div><b style="font-size:19px">${t.label}${b ? ' w/ BFC*' : ''}</b><div class="muted small">${money(m.down)} down · 30-year fixed</div></div>
-        ${b ? `<div class="est bfc"><div class="small" style="font-weight:650">With the builder rate (BFC) · ${pct(br)}*</div><div class="amt">${money(b.total)} – ${money(Math.ceil(b.high / 10) * 10)}</div><div class="small">per month, estimated</div>${S.pay.bd ? bd(b) : ''}</div>` : `<div class="est mkt small">No BFC rate on this home. Ask about current incentives.</div>`}
-        <div class="est mkt"><div class="small" style="font-weight:650">At today’s rate · ${pct(mr)}</div><div class="amt">${money(m.total)} – ${money(Math.ceil(m.high / 10) * 10)}</div><div class="small">per month, estimated</div>${S.pay.bd ? bd(m) : ''}</div>
-        ${b ? `<div class="bar" aria-hidden="true"><i style="width:${Math.round(100 * b.total / m.total)}%"></i></div><div style="font-size:18px;font-weight:700">About ${money(gap)} less per month</div><div class="muted small">About ${money(gap * 12)} less per year</div>` : ''}
+      const bdBlock = bp ? `<div class="est bdn"><div class="small" style="font-weight:650">2/1 buydown · ${pct(Math.max(bp.note - 2, 0))} → ${pct(Math.max(bp.note - 1, 0))} → ${pct(bp.note)}*</div>
+          <table class="ladder"><tr><td>Year 1</td><td>${money(bp.y1.total)}</td></tr><tr><td>Year 2</td><td>${money(bp.y2.total)}</td></tr><tr><td>Years 3–30</td><td>${money(bp.y3.total)}</td></tr></table>
+          <div class="small">per month, estimated · builder funds about ${money(bp.fund)}</div>${noteSource(bp) ? `<div class="small" style="margin-top:4px">${noteSource(bp)}</div>` : ''}</div>` : '';
+      const bfcBlock = b && !(bp && bp.from === 'bfc') ? `<div class="est bfc"><div class="small" style="font-weight:650">Builder rate (BFC · ${monName(b.k)} closing) · ${pct(b.rate)}*</div><div class="amt">${rangeOf(b.e)}</div><div class="small">per month, estimated</div>${S.pay.bd ? bd(b.e) : ''}</div>` : '';
+      const none = !b && !bp ? `<div class="est mkt small">${c.ms ? `On the ${monthsText(c.ms)} BFC list, but no ${t.rate.toUpperCase()} rate is set. Add it in Settings.` : 'No builder rate on this home. Ask about current incentives.'}</div>` : '';
+      const best = bp ? bp.y1 : (b ? b.e : null), gap = best ? m.total - best.total : 0;
+      return `<section class="card route"><div><b style="font-size:19px">${t.label}${b || (bp && bp.from !== 'today') ? ' w/ BFC*' : ''}</b><div class="muted small">${money(m.down)} down · 30-year fixed</div></div>
+        ${bdBlock}${bfcBlock}${none}
+        <div class="est mkt"><div class="small" style="font-weight:650">At today’s rate · ${pct(o.tr)}</div><div class="amt">${rangeOf(m)}</div><div class="small">per month, estimated</div>${S.pay.bd ? bd(m) : ''}</div>
+        ${gap > 0 ? `<div class="bar" aria-hidden="true"><i style="width:${Math.round(100 * best.total / m.total)}%"></i></div><div style="font-size:18px;font-weight:700">About ${money(gap)} less per month${bp ? ' in year 1' : ''}</div><div class="muted small">${bp ? `About ${money(m.total - bp.y2.total)} less in year 2, ${money(m.total - bp.y3.total)} less after` : `About ${money(gap * 12)} less per year`}</div>` : ''}
         ${m.mi ? `<div class="muted small">Mortgage insurance estimated at ${money(m.mi)}/mo. It varies with credit; the range allows for that.</div>` : ''}</section>`;
     }).join('') + '</div>';
   }
@@ -393,22 +480,128 @@ VIEWS.pay = () => {
   <main class="wrap">
     <section class="card" style="display:flex;flex-direction:column;gap:10px">
       <div class="row"><div style="flex:1 1 320px">${picker}</div><input type="number" id="payprice" inputmode="numeric" placeholder="Price" value="${price ? Math.round(price) : ''}" style="flex:0 1 200px" aria-label="Price"></div>
-      ${label ? `<div><b>${esc(label)}</b>${bfc ? ` <span class="badge" style="background:#E6EEFB;color:#163F8C">BFC · ${bfc === 'novdec' ? 'Nov/Dec' : 'Jan'} closing</span>` : ''}</div>` : ''}
+      ${c.label ? `<div><b>${esc(c.label)}</b>${badges}</div>` : ''}
+      ${incPick}
       <div class="row">${chips}<span class="grow"></span><button class="btn small" data-a="bd">${S.pay.bd ? 'Hide' : 'Show'} breakdown</button></div>
     </section>
     ${cards}
-    <p class="small" style="margin:0">Same method as the drhorton.com calculator: taxes about 1.22% of price, insurance about 0.276%, HOA $85 (townhome $195), FHA upfront MIP financed. Today’s rates are D.R. Horton’s sample rates as of ${usDate(r.asOf)}. Each range starts at the website’s estimate and adds room for taxes, insurance and mortgage insurance running higher. Laura confirms real numbers.</p>
+    ${price ? valuePanel(c) : ''}
+    <p class="small" style="margin:0">Same method as the drhorton.com calculator: taxes about 1.22% of price, insurance about 0.276%, HOA $85 (townhome $195), FHA upfront MIP financed. Today’s rates are D.R. Horton’s sample rates as of ${usDate(r.asOf)}. Each range starts at the website’s estimate and adds room for taxes, insurance and mortgage insurance running higher. A 2/1 buydown lowers the rate 2 points in year 1 and 1 point in year 2; the builder-funded amount is the principal + interest difference. Laura confirms real numbers.</p>
     <details class="card"><summary style="font-weight:650;cursor:pointer;min-height:28px">*Legal disclaimer</summary><div class="legal" style="margin-top:8px">${esc(LEGAL)}</div></details>
   </main></div>`;
 };
+
+/* What the incentive is worth: payment over the first five years, today's rate vs the builder's offer. */
+function valuePanel(c) {
+  const routes = S.pay.routes; if (!routes.length) return '';
+  const k = routes.includes(S.pay.vk) ? S.pay.vk : routes[0];
+  const o = payOptions(c, k); if (!o.bfc && !o.bdp) return '';
+  const t = o.today.total, series = [{ id: 'today', name: 'Today’s rate', rate: pct(o.tr), cls: 'g', v: [t, t, t] }];
+  const showBfc = o.bfc && !(o.bdp && o.bdp.from === 'bfc');
+  if (showBfc) series.push({ id: 'bfc', name: 'Builder rate (BFC)', rate: pct(o.bfc.rate), cls: 'b', v: [o.bfc.e.total, o.bfc.e.total, o.bfc.e.total] });
+  if (o.bdp) series.push({ id: 'bd', name: o.bdp.from === 'bfc' ? '2/1 buydown on the builder rate' : '2/1 buydown', rate: `${pct(Math.max(o.bdp.note - 2, 0))} → ${pct(Math.max(o.bdp.note - 1, 0))} → ${pct(o.bdp.note)}`, cls: 'o', v: [o.bdp.y1.total, o.bdp.y2.total, o.bdp.y3.total] });
+  const best = series[series.length - 1];
+  if (best.v[0] >= t) return `<section class="card muted">Today’s rate is at or below the builder rate for ${LT[k].label}, so there’s nothing to show here.</section>`;
+  const keep = (i) => t - best.v[Math.min(i, 2)];
+  const five = 12 * (keep(0) + keep(1) + 3 * keep(2));
+  const perm = o.bdp ? o.bdp.note : o.bfc.rate, permTotal = estimate(c.price, k, perm, c.th).total;
+  const eq = perm < o.tr ? Math.round(priceForPayment(permTotal, k, o.tr, c.th) / 1000) * 1000 : 0, cut = eq ? Math.round((c.price - eq) / 1000) * 1000 : 0;
+  const tile = (lab, val, sub) => `<div class="kpi"><div class="kpi-l">${lab}</div><div class="kpi-v">${val}</div>${sub ? `<div class="kpi-s">${sub}</div>` : ''}</div>`;
+  const tiles = o.bdp
+    ? [tile('Year 1 payment', money(o.bdp.y1.total), `${money(keep(0))} less than today’s rate`), tile('Kept in the first 5 years', money(five), 'vs. today’s rate'),
+       tile('Builder-funded buydown', money(o.bdp.fund), 'pays down years 1 and 2'), cut > 0 ? tile('Like a price cut of', money(cut), `years 3–30 cost the same as a ${money(eq)} price at today’s rate`) : '']
+    : [tile('Less per month', money(keep(0)), `${money(o.bfc.e.total)} vs. ${money(t)}`), tile('Kept per year', money(12 * keep(0)), 'vs. today’s rate'),
+       tile('Kept in the first 5 years', money(five), 'vs. today’s rate'), cut > 0 ? tile('Like a price cut of', money(cut), `same payment as a ${money(eq)} price at today’s rate`) : ''];
+  S.pay._vc = series;
+  const seg = routes.length > 1 ? `<div class="seg" role="group" aria-label="Loan type">${routes.map((x) => `<button class="${x === k ? 'on' : ''}" data-a="vk" data-k="${x}" aria-pressed="${x === k}">${LT[x].label.replace(' Down', '')}</button>`).join('')}</div>` : '';
+  const why = o.bdp
+    ? `The builder pays to lower the rate for two years: 2 points lower in year 1, 1 point lower in year 2. From year 3 on it stays at the ${pct(o.bdp.note)} note rate${o.bdp.from === 'bfc' ? ', the builder rate' : ''}.`
+    : `The builder locked a lower rate with DHI Mortgage for homes closing in ${monthsLong(c.ms)}. Same home, a lower payment for the life of the loan.`;
+  return `<section class="card vpanel" aria-labelledby="vp-h">
+    <div class="row"><div class="grow"><h2 id="vp-h" style="margin:0;font-size:22px">What the incentive is worth</h2><div class="muted small">${esc(LT[k].label)} · ${money(c.price)} · estimated monthly payment</div></div>${seg}</div>
+    <p style="margin:0;font-size:16px">${why}</p>
+    <div class="kpis">${tiles.join('')}</div>
+    <div class="vlegend">${series.map((x) => `<span><i class="key ${x.cls}"></i>${esc(x.name)} <span class="muted">${x.rate}</span></span>`).join('')}</div>
+    <div class="vchart" id="vchart">${valueChart(series)}<div class="vtip" id="vtip" hidden></div></div>
+    <table class="vtable"><thead><tr><th scope="col">Monthly payment</th><th scope="col">Year 1</th><th scope="col">Year 2</th><th scope="col">Years 3–30</th></tr></thead>
+      <tbody>${series.map((x) => `<tr><th scope="row"><i class="key ${x.cls}"></i>${esc(x.name)}</th>${x.v.map((v) => `<td>${money(v)}</td>`).join('')}</tr>`).join('')}
+      <tr class="keep"><th scope="row">You keep each month</th>${[0, 1, 2].map((i) => `<td>${money(keep(i))}</td>`).join('')}</tr></tbody></table>
+    ${o.bdp && noteSource(o.bdp) ? `<div class="muted small">${noteSource(o.bdp)}</div>` : ''}
+  </section>`;
+}
+const VC = { W: 760, H: 290, l: 76, r: 16, t: 18, b: 40, years: 5 };
+function vcScale(series) {
+  const all = series.flatMap((s) => s.v), mn = Math.min(...all), mx = Math.max(...all);
+  const span = Math.max(mx - mn, 200), step = [50, 100, 200, 250, 500, 1000].find((s) => (span * 1.6) / s <= 5) || 1000;
+  const lo = Math.max(0, Math.floor((mn - span * 0.35) / step) * step), hi = Math.ceil((mx + span * 0.2) / step) * step;
+  const pw = VC.W - VC.l - VC.r, ph = VC.H - VC.t - VC.b;
+  return { lo, hi, step, pw, bw: pw / VC.years, x: (yr) => VC.l + yr * (pw / VC.years), y: (v) => VC.t + ph * (1 - (v - lo) / (hi - lo)) };
+}
+const vAt = (s, i) => s.v[Math.min(i, 2)];
+function valueChart(series) {
+  const sc = vcScale(series), { x, y } = sc, x0 = x(0), x5 = x(VC.years), base = VC.H - VC.b;
+  const path = (s) => `M${x0},${y(s.v[0])}H${x(1)}V${y(s.v[1])}H${x(2)}V${y(s.v[2])}H${x5}`;
+  const today = series[0], best = series[series.length - 1];
+  const wash = `M${x0},${y(today.v[0])}H${x5}V${y(best.v[2])}H${x(2)}V${y(best.v[1])}H${x(1)}V${y(best.v[0])}H${x0}Z`;
+  let grid = '';
+  for (let v = sc.lo; v <= sc.hi + 0.5; v += sc.step) grid += `<line x1="${x0}" x2="${x5}" y1="${y(v)}" y2="${y(v)}" class="gl"/><text x="${x0 - 10}" y="${y(v) + 5}" text-anchor="end" class="tk">${money(v)}</text>`;
+  let bands = '';
+  for (let i = 0; i < VC.years; i++) bands += `${i ? `<line x1="${x(i)}" x2="${x(i)}" y1="${VC.t}" y2="${base}" class="gl"/>` : ''}<text x="${x(i) + sc.bw / 2}" y="${base + 26}" text-anchor="middle" class="tk">Year ${i + 1}</text>`;
+  // direct labels above each line at the right edge, skipped where two would collide (the legend carries them)
+  const ly = series.map((s) => y(s.v[2]));
+  const labels = series.map((s, i) => (ly.some((v, j) => j !== i && Math.abs(v - ly[i]) < 22) ? '' : `<text x="${x5 - 8}" y="${ly[i] - 9}" text-anchor="end" class="dl">${esc(s.name)} · ${money(s.v[2])}</text>`)).join('');
+  const k1 = today.v[0] - best.v[0], hy = (y(today.v[0]) + y(best.v[0])) / 2;
+  const keepLbl = y(best.v[0]) - y(today.v[0]) > 26 ? `<text x="${x0 + sc.bw / 2}" y="${hy + 6}" text-anchor="middle" class="kl">${money(k1)} less</text>` : '';
+  return `<svg viewBox="0 0 ${VC.W} ${VC.H}" role="img" aria-label="Monthly payment over the first five years: ${series.map((s) => `${s.name} ${s.v.map(money).join(', ')}`).join('; ')}" tabindex="0" id="vsvg">
+    ${grid}${bands}<line x1="${x0}" x2="${x5}" y1="${base}" y2="${base}" class="ax"/>
+    <path d="${wash}" class="wash ${best.cls}"/>
+    ${series.map((s) => `<path d="${path(s)}" class="ln ${s.cls}"/>`).join('')}
+    ${labels}${keepLbl}
+    <g id="vcross" style="display:none"><line y1="${VC.t}" y2="${base}" class="cross"/>${series.map((s) => `<circle r="5" class="dot ${s.cls}"/>`).join('')}</g>
+    <rect x="${x0}" y="${VC.t}" width="${x5 - x0}" height="${base - VC.t}" fill="transparent" id="vhit"/></svg>`;
+}
+function vcShow(i) {
+  const series = S.pay._vc, svg = document.getElementById('vsvg'), tip = document.getElementById('vtip'), g = document.getElementById('vcross');
+  if (!series || !svg || !tip) return;
+  const sc = vcScale(series), cx = sc.x(i) + sc.bw / 2;
+  g.style.display = ''; g.querySelector('line').setAttribute('x1', cx); g.querySelector('line').setAttribute('x2', cx);
+  g.querySelectorAll('circle').forEach((d, j) => { d.setAttribute('cx', cx); d.setAttribute('cy', sc.y(vAt(series[j], i))); });
+  tip.textContent = '';
+  const h = document.createElement('div'); h.className = 'vt-h'; h.textContent = i < 2 ? `Year ${i + 1}` : `Year ${i + 1} (same through year 30)`; tip.appendChild(h);
+  series.slice().reverse().forEach((s) => {
+    const row = document.createElement('div'); row.className = 'vt-r';
+    const key = document.createElement('i'); key.className = 'key ' + s.cls;
+    const v = document.createElement('b'); v.textContent = money(vAt(s, i));
+    const n = document.createElement('span'); n.textContent = s.name;
+    row.append(key, v, n); tip.appendChild(row);
+  });
+  const kp = document.createElement('div'); kp.className = 'vt-k'; kp.textContent = `You keep ${money(vAt(series[0], i) - vAt(series[series.length - 1], i))} a month`; tip.appendChild(kp);
+  tip.hidden = false;
+  const box = svg.getBoundingClientRect(), wrap = svg.parentElement.getBoundingClientRect(), px = (cx / VC.W) * box.width;
+  const left = px + 14 + tip.offsetWidth > wrap.width ? px - 14 - tip.offsetWidth : px + 14;
+  tip.style.left = Math.max(0, left) + 'px'; tip.style.top = '8px';
+  svg.dataset.i = i;
+}
+function vcHide() { const g = document.getElementById('vcross'), tip = document.getElementById('vtip'); if (g) g.style.display = 'none'; if (tip) tip.hidden = true; }
 AFTER.pay = () => {
-  const pick = document.getElementById('paypick'), inp = document.getElementById('payprice');
+  const pick = document.getElementById('paypick'), inp = document.getElementById('payprice'), inc = document.getElementById('payinc');
   if (pick) pick.addEventListener('change', () => {
     if (pick.value === 'custom' || pick.value === '') { S.pay.lot = null; S.pay.label = 'Custom price'; S.pay.price = +inp.value || null; }
     else { S.pay.lot = +pick.value; S.pay.price = null; }
     rerender();
   });
   if (inp) inp.addEventListener('change', () => { S.pay.lot = null; S.pay.price = +inp.value || null; S.pay.label = 'Custom price'; rerender(); });
+  if (inc) inc.addEventListener('change', () => { S.pay.inc = inc.value; rerender(); });
+  const svg = document.getElementById('vsvg');
+  if (svg) {
+    const at = (e) => { const b = svg.getBoundingClientRect(), sx = ((e.clientX - b.left) / b.width) * VC.W, sc = vcScale(S.pay._vc); return Math.max(0, Math.min(VC.years - 1, Math.floor((sx - VC.l) / sc.bw))); };
+    svg.addEventListener('pointermove', (e) => vcShow(at(e)));
+    svg.addEventListener('pointerdown', (e) => vcShow(at(e)));
+    svg.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') vcHide(); });
+    svg.addEventListener('focus', () => vcShow(+(svg.dataset.i || 0)));
+    svg.addEventListener('blur', vcHide);
+    svg.addEventListener('keydown', (e) => { const i = +(svg.dataset.i || 0); if (e.key === 'ArrowRight') { vcShow(Math.min(VC.years - 1, i + 1)); e.preventDefault(); } if (e.key === 'ArrowLeft') { vcShow(Math.max(0, i - 1)); e.preventDefault(); } });
+  }
 };
 const LEGAL = `This is NOT a loan offer. D.R. Horton, the seller, is not a lender and does not offer financing. The above calculator and any related information provide an example of mortgage payments calculated for general informational and educational purposes only, are based on the above sample data points and cannot be used to determine loan terms or costs for any actual mortgage loan. Sample results may not be available to you for financing purposes, or address all loan options or important considerations for home buying and financing decisions. Mortgage loan terms actually available to you depend on factors like the lender and loan type you choose, and are subject to credit approval, market conditions, availability, and other terms and conditions, including closing costs which may increase the monthly payment calculation.
 
@@ -464,15 +657,26 @@ AFTER.answers = () => {
 
 /* settings */
 VIEWS.settings = () => {
-  const r = rates(), b = bfcLists(), a = LS.get('agent', { name: 'Charles Carper', license: '', firm: '', rel: [] });
-  const num = (id, v, lab) => `<label class="f">${lab}<input type="number" step="0.001" id="${id}" value="${v}"></label>`;
+  const r = rates(), a = LS.get('agent', { name: 'Charles Carper', license: '', firm: '', rel: [] }), st = bfcStore(), bdo = buydown();
+  const num = (id, v, lab) => `<label class="f">${lab}<input type="number" step="0.001" inputmode="decimal" id="${id}" value="${hasRate(v) ? v : ''}"></label>`;
+  const now = new Date(), thisK = ymKey(now);
+  const months = bfcWindow().map((m) => `<div class="bfcm"><div class="row"><b style="font-size:17px">${monName(m.k, true)}</b>${m.k === thisK ? '<span class="badge" style="background:var(--line2)">this month</span>' : ''}${!PROGS.some(([p]) => hasRate(m[p])) ? '<span class="badge" style="background:var(--amber-soft);color:var(--amber-ink)">needs rates</span>' : ''}</div>
+      <div class="grid g4">${PROGS.map(([p, nm]) => num(`bm_${p}_${m.k}`, m[p], `${nm} %`)).join('')}<label class="f">Lots on this list<input type="text" inputmode="numeric" id="bm_lots_${m.k}" value="${m.lots.join(', ')}" placeholder="e.g. 89, 90, 95"></label></div></div>`).join('');
   return `<div class="app">${top('Settings', { back: 'menu' })}<main class="wrap">
-    <section class="card" style="display:flex;flex-direction:column;gap:12px"><b style="font-size:18px">Rates</b>
-      <div class="muted small">Today’s rates: copy from the drhorton.com calculator on any home. BFC: from the latest BFC email.</div>
+    <section class="card" style="display:flex;flex-direction:column;gap:12px"><b style="font-size:18px">Today’s rates</b>
+      <div class="muted small">Copy from the drhorton.com calculator on any home.</div>
       <div class="grid g4">${num('r_conv', r.conv, 'Conventional %')}${num('r_fha', r.fha, 'FHA %')}${num('r_va', r.va, 'VA %')}<label class="f">As of<input type="date" id="r_asof" value="${r.asOf}"></label></div>
-      <div class="grid g4">${num('r_nd_g', r.novdec.govt, 'BFC Nov/Dec · govt %')}${num('r_nd_c', r.novdec.conv, 'BFC Nov/Dec · conv %')}${num('r_j_g', r.jan.govt, 'BFC Jan · govt %')}${num('r_j_c', r.jan.conv, 'BFC Jan · conv %')}</div>
-      <div class="grid g2"><label class="f">Lots on the Nov/Dec BFC lists<input type="text" id="b_nd" value="${b.novdec.join(', ')}"></label><label class="f">Lots on the Jan BFC lists<input type="text" id="b_j" value="${b.jan.join(', ')}"></label></div>
+      <b style="font-size:18px;margin-top:6px">Builder rates (BFC) by closing month</b>
+      <div class="muted small">Fill each month from the BFC email. Months roll forward on their own: when a month passes it drops off, and the next one shows up here blank. Leave a rate blank if that program isn’t offered. A lot on two months’ lists uses the earlier month’s rate.</div>
+      <label class="check small"><input type="checkbox" id="bm_this" ${st.thisMonth ? 'checked' : ''}> Also show this month (${MONL[now.getMonth()]})</label>
+      ${months}
       <div class="row"><button class="btn primary" data-a="saverates">Save rates</button><button class="btn" data-a="resetrates">Reset to built-in</button></div></section>
+    <section class="card" style="display:flex;flex-direction:column;gap:12px"><b style="font-size:18px">2/1 buydown special</b>
+      <div class="muted small">Usually on one home. Year 1 is 2 points under the note rate, year 2 is 1 point under, and years 3–30 are at the note rate. The builder funds the difference. Payment compare shows all three payments and a chart of what it’s worth.</div>
+      <div class="grid g4"><label class="f">Lots with the special<input type="text" inputmode="numeric" id="bd_lots" value="${(bdo.lots || []).join(', ')}" placeholder="e.g. 89"></label>${PROGS.map(([p, nm]) => num(`bd_${p}`, bdo[p], `Note rate · ${nm} %`)).join('')}</div>
+      <div class="grid g4"><label class="f">Close by (optional)<input type="date" id="bd_close" value="${esc(bdo.closeBy || '')}"></label></div>
+      <div class="muted small">Leave a note rate blank to use that home’s BFC rate, or today’s rate if it isn’t on a BFC list.</div>
+      <div class="row"><button class="btn primary" data-a="savebuydown">Save buydown</button><button class="btn" data-a="resetbuydown">Reset to built-in</button></div></section>
     <section class="card" style="display:flex;flex-direction:column;gap:12px"><b style="font-size:18px">WWREA agent section</b>
       <div class="grid g3"><label class="f">Agent’s name<input type="text" id="a_name" value="${esc(a.name)}"></label><label class="f">License no.<input type="text" id="a_lic" value="${esc(a.license)}"></label><label class="f">Firm name<input type="text" id="a_firm" value="${esc(a.firm)}"></label></div>
       <div class="label">Default relationship box</div>
@@ -502,6 +706,7 @@ VIEWS.settings = () => {
   </main></div>`;
 };
 AFTER.settings = () => {
+  const tm = document.getElementById('bm_this'); if (tm) tm.addEventListener('change', () => { A.saverates(null, true); rerender(); });
   const f = document.getElementById('csvfile'); if (f) f.addEventListener('change', importCSV);
   const np = document.getElementById('newpass'); if (np) np.addEventListener('submit', (e) => { e.preventDefault(); makePassFile(); });
 };
@@ -783,15 +988,26 @@ const A = {
   makepdf: async (t) => { t.disabled = true; t.textContent = 'Preparing…'; try { await buildWWREA(); rerender(); } catch (e) { toast('Couldn’t build the PDF. Try again.'); t.disabled = false; } },
   sharepdf: () => { if (S.pdf) sharePDF(); },
   guestfinish: () => { S.guest = null; S.pdf = null; S.pdfName = ''; go('menu'); toast('Buyer info cleared'); },
-  saverates: () => {
+  saverates: (t, quiet) => {
     const v = (id) => +document.getElementById(id).value;
-    LS.set('rates', { asOf: document.getElementById('r_asof').value || today(), conv: v('r_conv'), fha: v('r_fha'), va: v('r_va'),
-      novdec: { govt: v('r_nd_g'), conv: v('r_nd_c') }, jan: { govt: v('r_j_g'), conv: v('r_j_c') } });
-    const nums = (id) => document.getElementById(id).value.split(/[^0-9]+/).filter(Boolean).map(Number);
-    LS.set('bfcLots', { novdec: nums('b_nd'), jan: nums('b_j') });
-    toast('Rates saved');
+    LS.set('rates', { asOf: document.getElementById('r_asof').value || today(), conv: v('r_conv'), fha: v('r_fha'), va: v('r_va') });
+    const st = bfcStore(), cur = ymKey(new Date()), val = (id) => { const x = document.getElementById(id).value.trim(); return x === '' ? null : +x; };
+    bfcWindow().forEach((m) => {
+      st.months[m.k] = { fha: val(`bm_fha_${m.k}`), va: val(`bm_va_${m.k}`), conv: val(`bm_conv_${m.k}`), lots: document.getElementById(`bm_lots_${m.k}`).value.split(/[^0-9]+/).filter(Boolean).map(Number) };
+    });
+    Object.keys(st.months).forEach((k) => { if (k < cur) delete st.months[k]; });   // past months drop off
+    st.thisMonth = document.getElementById('bm_this').checked;
+    LS.set('bfc', st); LS.del('bfcLots');
+    if (quiet !== true) toast('Rates saved');
   },
-  resetrates: () => { LS.del('rates'); LS.del('bfcLots'); rerender(); toast('Back to built-in rates'); },
+  resetrates: () => { LS.del('rates'); LS.del('bfc'); LS.del('bfcLots'); rerender(); toast('Back to built-in rates'); },
+  savebuydown: () => {
+    const val = (id) => { const x = document.getElementById(id).value.trim(); return x === '' ? null : +x; };
+    LS.set('buydown', { lots: document.getElementById('bd_lots').value.split(/[^0-9]+/).filter(Boolean).map(Number), fha: val('bd_fha'), va: val('bd_va'), conv: val('bd_conv'), closeBy: document.getElementById('bd_close').value || '' });
+    toast('Buydown saved');
+  },
+  resetbuydown: () => { LS.del('buydown'); rerender(); toast('Back to the built-in buydown'); },
+  vk: (t) => { S.pay.vk = t.dataset.k; rerender(); },
   saveagent: () => { LS.set('agent', { name: document.getElementById('a_name').value.trim(), license: document.getElementById('a_lic').value.trim(), firm: document.getElementById('a_firm').value.trim(), rel: Array.from(document.querySelectorAll('.a_rel:checked')).map((x) => x.value) }); toast('Saved'); },
   resetlots: () => { LS.del('lots'); rerender(); toast('Back to built-in lots'); },
   offline: () => saveOffline(),
