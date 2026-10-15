@@ -4,7 +4,7 @@
 'use strict';
 
 const D = window.APP_DATA;
-const CACHE = 'ag-v5';
+const CACHE = 'ag-v6';
 const app = document.getElementById('app');
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = (v) => '$' + Math.round(v).toLocaleString('en-US');
