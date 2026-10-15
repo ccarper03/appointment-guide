@@ -143,6 +143,10 @@ async function deriveKey(pass) {
   const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(norm), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: b64d(T.salt), iterations: T.iter, hash: 'SHA-256' }, km, { name: 'AES-GCM', length: 256 }, true, ['decrypt']);
 }
+async function freshTalkFile() {
+  const t = await fetch('data/talk-locked.js?fresh=' + Date.now(), { cache: 'no-store' }).then((r) => { if (!r.ok) throw new Error('fetch'); return r.text(); });
+  window.TALK_LOCKED = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1));
+}
 async function openTalk(key) {
   const T = window.TALK_LOCKED;
   const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64d(T.iv) }, key, b64d(T.ct));
@@ -182,7 +186,7 @@ function viewLock() {
   return `<div class="lock"><form class="card" id="unlock">
     <div class="label">Appointment guide</div><h1>Collins Ridge</h1>
     <input type="text" name="username" autocomplete="username" value="Collins Ridge guide" readonly tabindex="-1" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
-    <label class="f">Passcode<input type="password" id="pass" name="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+    <div class="row" style="align-items:flex-end"><label class="f grow">Passcode<input type="password" id="pass" name="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false"></label><button type="button" class="btn" data-a="peek" aria-pressed="false" style="min-height:48px">Show</button></div>
     <label class="check"><input type="checkbox" id="remember" checked> Remember this device</label>
     <button class="btn primary" type="submit">Unlock</button>
     <div class="muted small" id="lockmsg" role="status"></div></form></div>`;
@@ -1036,6 +1040,7 @@ const A = {
   resetlots: () => { LS.del('lots'); rerender(); toast('Back to built-in lots'); },
   offline: () => saveOffline(),
   savepassfile: () => { if (S.passFile) savePassFile(); },
+  peek: (t) => { const p = document.getElementById('pass'), show = p.type === 'password'; p.type = show ? 'text' : 'password'; t.textContent = show ? 'Hide' : 'Show'; t.setAttribute('aria-pressed', show); },
   lock: () => { LS.del('k'); S.talk = null; go('menu'); render(); }
 };
 function confirmCancel() { const g = S.guest; return !g || (!g.f1 && !g.l1) || window.confirm('Clear this guest card?'); }
@@ -1051,11 +1056,15 @@ document.addEventListener('submit', async (e) => {
   e.preventDefault();
   const msg = document.getElementById('lockmsg'), pass = document.getElementById('pass').value;
   msg.textContent = 'Checking…';
+  // Check against the live passcode file, so a device holding an old copy can't keep an old passcode working.
+  // Offline, it falls back to the copy saved on this device.
+  try { await freshTalkFile(); } catch (e) { /* offline */ }
   try {
     const key = await deriveKey(pass); await openTalk(key);
     if (document.getElementById('remember').checked) LS.set('k', b64e(new Uint8Array(await crypto.subtle.exportKey('raw', key))));
-    render();
-  } catch (err) { msg.textContent = 'That passcode didn’t work.'; }
+    render(); return;
+  } catch (err) { /* wrong passcode */ }
+  msg.textContent = 'That passcode didn’t work. If Safari filled it in, it may be an old one: tap Show to check, or clear the box and type it.';
 });
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
