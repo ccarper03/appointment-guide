@@ -1,5 +1,5 @@
 /* Appointment Guide service worker: works offline at the model with weak signal. */
-const CACHE = 'ag-v15';
+const CACHE = 'ag-v16';
 const CORE = [
   './', 'index.html', 'app.css', 'app.js', 'manifest.webmanifest',
   'data/app-data.js', 'data/talk-locked.js',

@@ -27,7 +27,7 @@ const LINKS = {
 /* ---------- state ---------- */
 const S = {
   talk: null, stage: 0, obj: 0,
-  f: {}, mapPlan: 'All', layers: { avail: true, spec: true, open: true, sold: true, unrel: true },
+  f: {}, mapPlan: 'All', mapMs: 'All', layers: { avail: true, spec: true, open: true, sold: true, unrel: true },
   sel: null, zoom: 1.5, sort: 'price', planZoom: 1,
   ansCat: 'All', q: '',
   pay: { lot: null, price: null, label: '', routes: ['F035', 'C05', 'C20'], bd: false, vk: null },
@@ -367,7 +367,16 @@ VIEWS.plan = (name) => {
 /* site map */
 VIEWS.map = () => {
   const L = lotsData(), pos = D.pos;
-  const fits = (n) => S.mapPlan === 'All' || (L[n] && L[n].plan === S.mapPlan) || (L[n] && L[n].c === 'open' && fitsLot(S.mapPlan, n));
+  const planFits = (n) => S.mapPlan === 'All' || (L[n] && L[n].plan === S.mapPlan) || (L[n] && L[n].c === 'open' && fitsLot(S.mapPlan, n));
+  // Stage (build milestone) filter: only homes for sale have one; 'none' = spec'd but not started
+  const msOf = (l) => (l && l.c === 'spec' ? (l.ms || 'none') : null);
+  const msFits = (n) => S.mapMs === 'All' || msOf(L[n]) === S.mapMs;
+  const fits = (n) => planFits(n) && msFits(n);
+  const msCount = {}; Object.entries(L).forEach(([n, l]) => { const m = msOf(l); if (m && planFits(n)) msCount[m] = (msCount[m] || 0) + 1; });
+  const msKeys = Object.keys(msCount).sort((a, b) => (a === 'none' ? -1 : b === 'none' ? 1 : +a - +b));
+  if (S.mapMs !== 'All' && !msCount[S.mapMs]) msKeys.push(S.mapMs);
+  const msChip = (k, label, ct) => `<button class="chip dark ${S.mapMs === k ? 'on' : ''}" data-a="mms" data-k="${k}" style="min-height:36px;font-size:14px">${label}${ct != null ? `<span class="ct">${ct}</span>` : ''}</button>`;
+  const stages = msChip('All', 'All stages') + msKeys.map((k) => msChip(k, k === 'none' ? 'Not started' : 'M' + k, msCount[k] || 0)).join('');
   const dots = Object.entries(pos).map(([n, xy]) => {
     const l = L[n], s = statusOf(l), st = ST[s];
     if (!S.layers[s]) return '';
@@ -389,6 +398,8 @@ VIEWS.map = () => {
       ${S.sel ? lotCard(S.sel) : '<section class="card muted">Tap a lot to see what’s there.</section>'}
       <section class="card list"><div class="label" style="margin-bottom:4px">Show on map</div>${layers}</section>
       <section class="card"><div class="label" style="margin-bottom:8px">Plan</div><div class="row">${plans}</div></section>
+      <section class="card"><div class="label" style="margin-bottom:8px">Stage <span style="text-transform:none;letter-spacing:0">· homes for sale by build milestone</span></div><div class="row">${stages}</div>
+        <div class="muted small" style="margin-top:8px">From the inventory pull, ${usDate(lotsAsOf())}. Import a new pull in Settings to refresh stages.</div></section>
       <section class="card list"><div class="row" style="margin-bottom:4px"><span class="label grow">${sellable.length} you can sell</span>
         <button class="chip dark ${S.sort === 'price' ? 'on' : ''}" data-a="sort" data-k="price" style="min-height:34px">Price</button><button class="chip dark ${S.sort === 'lot' ? 'on' : ''}" data-a="sort" data-k="lot" style="min-height:34px">Lot #</button></div>${rows}</section>
     </aside></div></main></div>`;
@@ -1003,6 +1014,7 @@ const A = {
   lot: (t) => { S.sel = +t.dataset.n; S._mapCentered = S.sel + '|' + S.zoom; rerender(); },
   layer: (t) => { const k = t.dataset.k; S.layers[k] = !S.layers[k]; rerender(); },
   mplan: (t) => { S.mapPlan = t.dataset.p; rerender(); },
+  mms: (t) => { S.mapMs = t.dataset.k; rerender(); },
   sort: (t) => { S.sort = t.dataset.k; rerender(); },
   zoom: (t) => { const box = document.getElementById('mapbox'); const fx = box ? (box.scrollLeft + box.clientWidth / 2) / box.scrollWidth : 0.5, fy = box ? (box.scrollTop + box.clientHeight / 2) / box.scrollHeight : 0.5; S.zoom = Math.min(3, Math.max(1, S.zoom + (+t.dataset.d) * 0.5)); S._mapCentered = S.sel + '|' + S.zoom; render().then(() => { const b = document.getElementById('mapbox'); if (b) { b.scrollLeft = fx * b.scrollWidth - b.clientWidth / 2; b.scrollTop = fy * b.scrollHeight - b.clientHeight / 2; } }); },
   paylot: (t) => { S.pay.lot = +t.dataset.n; S.pay.price = null; go('pay'); },
