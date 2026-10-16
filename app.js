@@ -259,12 +259,33 @@ VIEWS.talk = () => {
 /* find a home: plans */
 /* A home for sale that's under construction: build milestone M1-M13 (blank = spec'd, not started). */
 const underway = (l) => !!l && l.c === 'spec' && +l.ms >= 1 && +l.ms <= 13;
+/* Build timeline (Settings): permits (M00) take 6-10 weeks, construction (M01-M13) at least 100 days spread evenly
+   over the 13 stages, M09 and up is a 30-day close, and a home with no permit yet is quoted 5-7 months. */
+const timeline = () => { const o = LS.get('timeline', null); return o && o.days ? o : (D.timeline || { days: 100, permitWks: [6, 10], quick: 9, presaleMos: [5, 7] }); };
+const invAsOf = () => LS.get('invAsOf', null) || D.invAsOf || lotsAsOf();
+const quickClose = (l) => !!l && l.c === 'spec' && l.ms !== '' && l.ms != null && +l.ms >= timeline().quick;
+const monY = (d) => `${MON[d.getMonth()]} ${d.getFullYear()}`;
+const monRange = (a, b) => (a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() ? monY(a) : (a.getFullYear() === b.getFullYear() ? `${MON[a.getMonth()]}–${monY(b)}` : `${monY(a)}–${monY(b)}`));
+function buildEta(l) {
+  if (!l || l.c !== 'spec') return null;
+  const t = timeline(), now = new Date(), base = new Date(invAsOf() + 'T12:00:00');
+  const plus = (from, days) => { const x = new Date(from); x.setDate(x.getDate() + Math.round(days)); return x; };
+  const plusMo = (n) => new Date(now.getFullYear(), now.getMonth() + n, 1);
+  if (l.ms === '' || l.ms == null) return { kind: 'presale', text: `${t.presaleMos[0]}–${t.presaleMos[1]} months`, sub: `no permit yet · about ${monRange(plusMo(t.presaleMos[0]), plusMo(t.presaleMos[1]))}` };
+  const m = +l.ms;
+  if (m >= t.quick) return { kind: 'quick', text: '30-day close', sub: `stage M${l.ms}` };
+  if (m === 0) return { kind: 'permit', text: `Est. complete ${monRange(plus(base, t.permitWks[0] * 7 + t.days), plus(base, t.permitWks[1] * 7 + t.days))}`, sub: 'getting permits · M00' };
+  const done = plus(base, (13 - m) * t.days / 13);
+  if (done <= plus(now, 30)) return { kind: 'quick', text: '30-day close', sub: `stage M${l.ms}` };
+  return { kind: 'build', text: `Est. complete ${monY(done)}`, sub: `stage M${l.ms}` };
+}
+const etaTag = (l) => { const e = buildEta(l); return e ? `<span class="eta ${e.kind}">${e.text}</span>` : ''; };
 const specsFor = (name) => Object.entries(lotsData()).filter(([, l]) => l.c === 'spec' && l.plan === name).map(([n, l]) => ({ n: +n, l }));
 VIEWS.plans = () => {
   const f = S.f, PB = priceBands();
   const inBand = (v, k) => { const b = PB.bands.find((x) => x.k === k); return b && v >= b.lo && v < b.hi; };
   const chip = (k, v, t) => `<button class="chip ${f[k] === v ? 'on' : ''}" data-a="filt" data-k="${k}" data-v="${v}">${t}</button>`;
-  const want = (h) => { const z = parseSize(h.l.size); if (f.ms && !underway(h.l)) return false; if (f.beds && (!z || z.bd !== +f.beds)) return false; if (f.ba && (!z || z.ba !== +f.ba)) return false; return !(f.pr && PB && !inBand(h.l.price, f.pr)); };
+  const want = (h) => { const z = parseSize(h.l.size); if (f.ms === '1' && !underway(h.l)) return false; if (f.ms === 'q' && !quickClose(h.l)) return false; if (f.beds && (!z || z.bd !== +f.beds)) return false; if (f.ba && (!z || z.ba !== +f.ba)) return false; return !(f.pr && PB && !inBand(h.l.price, f.pr)); };
   const buildFrom = (p) => { const mp = p.base ? minPrem(p.name) : null; return mp === null ? 0 : p.base + mp; };
   const canBuild = (p, c) => !f.ms && buildFrom(p) > 0 && (!f.beds || c.beds.includes(+f.beds)) && (!f.ba || c.baths.includes(+f.ba)) && (!f.pr || !PB || inBand(buildFrom(p), f.pr));
   const narrowed = !!(f.beds || f.ba || f.pr || f.ms);
@@ -300,7 +321,7 @@ VIEWS.plans = () => {
     <span class="label">First floor</span>${chip('pd', '1', 'Primary down')}${chip('b1', '1', 'Any bedroom')}
     <span class="label">Type</span>${chip('ty', 'SF', 'Single-family')}${chip('ty', 'TH', 'Townhome')}
     ${PB ? `<span class="label">Price</span>${pchips}` : ''}
-    <span style="display:inline-flex;gap:10px;align-items:center"><span class="label">Stage</span>${chip('ms', '1', `Under construction · M1–M13<span class="ct">${Object.values(lotsData()).filter(underway).length}</span>`)}</span>
+    <span style="display:inline-flex;gap:10px;align-items:center"><span class="label">Stage</span>${chip('ms', '1', `Under construction · M1–M13<span class="ct">${Object.values(lotsData()).filter(underway).length}</span>`)}${chip('ms', 'q', `30-day close · M${timeline().quick}+<span class="ct">${Object.values(lotsData()).filter(quickClose).length}</span>`)}</span>
     ${Object.values(f).some(Boolean) ? '<button class="btn small" data-a="filtclear">Clear</button>' : ''}
   </div>
   <main class="wrap"><div class="muted">${list.length} of ${D.plans.length} plans match. Tap a plan to see the floor plan and its lots.</div><div class="grid g4">${cards}</div></main></div>`;
@@ -352,7 +373,7 @@ VIEWS.plan = (name) => {
   if (!p) return VIEWS.plans();
   const homes = specsFor(p.name).sort((a, b) => a.l.price - b.l.price);
   const opens = openFor(p.name).map(([n, l]) => ({ n: +n, l })).sort((a, b) => a.l.prem - b.l.prem);
-  const homeRows = homes.map((h) => `<button class="item" data-a="lotgo" data-n="${h.n}"><span class="sw" style="background:${ST[statusOf(h.l)].bg};border-color:${ST[statusOf(h.l)].bd}"></span><b style="width:70px">Lot ${h.n}</b><span class="grow">${esc(h.l.addr)}${parseSize(h.l.size) ? ` <span class="muted small">· ${parseSize(h.l.size).bd} bd · ${parseSize(h.l.size).ba} ba</span>` : ''}</span><b>${money(h.l.price)}</b></button>`).join('');
+  const homeRows = homes.map((h) => `<button class="item" data-a="lotgo" data-n="${h.n}"><span class="sw" style="background:${ST[statusOf(h.l)].bg};border-color:${ST[statusOf(h.l)].bd}"></span><b style="width:70px">Lot ${h.n}</b><span class="grow">${esc(h.l.addr)}${parseSize(h.l.size) ? ` <span class="muted small">· ${parseSize(h.l.size).bd} bd · ${parseSize(h.l.size).ba} ba</span>` : ''}<br>${etaTag(h.l)}</span><b>${money(h.l.price)}</b></button>`).join('');
   return `<div class="app">${top(p.name, { back: 'plans', backLabel: 'Plans', sub: p.type === 'TH' ? 'Townhome' : 'Single-family', right: `<button class="btn primary" data-a="planmap" data-p="${esc(p.name)}">See ${esc(p.name)} lots on the map</button>` })}
   <main class="wrap"><div class="split">
     <div class="main"><div class="row" style="margin-bottom:8px"><button class="btn small" data-a="pz" data-d="-1" aria-label="Zoom out">−</button><button class="btn small" data-a="pz" data-d="1" aria-label="Zoom in">+</button><span class="muted small">Pinch or use + / − to zoom</span></div>
@@ -373,14 +394,15 @@ VIEWS.map = () => {
   const planFits = (n) => S.mapPlan === 'All' || (L[n] && L[n].plan === S.mapPlan) || (L[n] && L[n].c === 'open' && fitsLot(S.mapPlan, n));
   // Stage (build milestone) filter: only homes for sale have one; 'none' = spec'd but not started
   const msOf = (l) => (l && l.c === 'spec' ? (l.ms || 'none') : null);
-  const msFits = (n) => S.mapMs === 'All' || (S.mapMs === 'built' ? underway(L[n]) : msOf(L[n]) === S.mapMs);
+  const msFits = (n) => S.mapMs === 'All' || (S.mapMs === 'built' ? underway(L[n]) : S.mapMs === 'quick' ? quickClose(L[n]) : msOf(L[n]) === S.mapMs);
   const fits = (n) => planFits(n) && msFits(n);
   const msCount = {}; Object.entries(L).forEach(([n, l]) => { const m = msOf(l); if (m && planFits(n)) msCount[m] = (msCount[m] || 0) + 1; });
   const msKeys = Object.keys(msCount).sort((a, b) => (a === 'none' ? -1 : b === 'none' ? 1 : +a - +b));
-  if (S.mapMs !== 'All' && S.mapMs !== 'built' && !msCount[S.mapMs]) msKeys.push(S.mapMs);
+  if (!['All', 'built', 'quick'].includes(S.mapMs) && !msCount[S.mapMs]) msKeys.push(S.mapMs);
+  const quickCount = Object.entries(L).filter(([n, l]) => quickClose(l) && planFits(n)).length;
   const builtCount = Object.entries(L).filter(([n, l]) => underway(l) && planFits(n)).length;
   const msChip = (k, label, ct) => `<button class="chip dark ${S.mapMs === k ? 'on' : ''}" data-a="mms" data-k="${k}" style="min-height:36px;font-size:14px">${label}${ct != null ? `<span class="ct">${ct}</span>` : ''}</button>`;
-  const stages = msChip('All', 'All stages') + msChip('built', 'M1–M13', builtCount) + msKeys.map((k) => msChip(k, k === 'none' ? 'Not started' : 'M' + k, msCount[k] || 0)).join('');
+  const stages = msChip('All', 'All stages') + msChip('built', 'M1–M13', builtCount) + msChip('quick', `30-day close · M${timeline().quick}+`, quickCount) + msKeys.map((k) => msChip(k, k === 'none' ? 'Not started' : 'M' + k, msCount[k] || 0)).join('');
   const dots = Object.entries(pos).map(([n, xy]) => {
     const l = L[n], s = statusOf(l), st = ST[s];
     if (!S.layers[s]) return '';
@@ -392,7 +414,7 @@ VIEWS.map = () => {
   const plans = ['All'].concat(D.plans.map((p) => p.name)).map((p) => `<button class="chip dark ${S.mapPlan === p ? 'on' : ''}" data-a="mplan" data-p="${p}" style="min-height:36px;font-size:14px">${p}</button>`).join('');
   const sellable = Object.entries(L).filter(([n, l]) => ['avail', 'spec', 'open'].includes(statusOf(l)) && S.layers[statusOf(l)] && fits(n)).map(([n, l]) => ({ n: +n, l }));
   sellable.sort((a, b) => S.sort === 'lot' ? a.n - b.n : ((a.l.price || 900000 + a.l.prem) - (b.l.price || 900000 + b.l.prem)));
-  const rows = sellable.map((x) => `<button class="item ${S.sel === x.n ? 'sel' : ''}" data-a="lot" data-n="${x.n}"><span class="sw" style="background:${ST[statusOf(x.l)].bg};border-color:${ST[statusOf(x.l)].bd}"></span><b style="width:66px">Lot ${x.n}</b><span class="grow">${esc(x.l.plan || 'Open · your choice')}</span><b>${x.l.price ? money(x.l.price) : '+' + money(x.l.prem)}</b></button>`).join('');
+  const rows = sellable.map((x) => `<button class="item ${S.sel === x.n ? 'sel' : ''}" data-a="lot" data-n="${x.n}"><span class="sw" style="background:${ST[statusOf(x.l)].bg};border-color:${ST[statusOf(x.l)].bd}"></span><b style="width:66px">Lot ${x.n}</b><span class="grow">${esc(x.l.plan || 'Open · your choice')}${x.l.c === 'spec' ? ' ' + etaTag(x.l) : ''}</span><b>${x.l.price ? money(x.l.price) : '+' + money(x.l.prem)}</b></button>`).join('');
   return `<div class="app">${top('Site map', { back: 'menu', right: `<a class="btn" href="#/plans">← Plans</a>` })}
   <main class="wrap"><div class="split">
     <div class="main"><div class="mapbox" id="mapbox"><div class="zoom"><button class="btn icon" data-a="zoom" data-d="1" aria-label="Zoom in">+</button><button class="btn icon" data-a="zoom" data-d="-1" aria-label="Zoom out">−</button></div>
@@ -403,7 +425,7 @@ VIEWS.map = () => {
       <section class="card list"><div class="label" style="margin-bottom:4px">Show on map</div>${layers}</section>
       <section class="card"><div class="label" style="margin-bottom:8px">Plan</div><div class="row">${plans}</div></section>
       <section class="card"><div class="label" style="margin-bottom:8px">Stage <span style="text-transform:none;letter-spacing:0">· homes for sale by build milestone</span></div><div class="row">${stages}</div>
-        <div class="muted small" style="margin-top:8px">From the inventory pull, ${usDate(lotsAsOf())}. Import a new pull in Settings to refresh stages.</div></section>
+        <div class="muted small" style="margin-top:8px">Stages from the inventory pull, ${usDate(invAsOf())}. Completion months count from that date: about ${timeline().days} days for M01–M13. Import a new pull in Settings to refresh.</div></section>
       <section class="card list"><div class="row" style="margin-bottom:4px"><span class="label grow">${sellable.length} you can sell</span>
         <button class="chip dark ${S.sort === 'price' ? 'on' : ''}" data-a="sort" data-k="price" style="min-height:34px">Price</button><button class="chip dark ${S.sort === 'lot' ? 'on' : ''}" data-a="sort" data-k="lot" style="min-height:34px">Lot #</button></div>${rows}</section>
     </aside></div></main></div>`;
@@ -425,7 +447,7 @@ function lotCard(n) {
     const ms = bfcFor(n), bd = onBuydown(n);
     const rl = ms ? PROGS.map(([p, nm]) => { const x = bfcRate(ms, p); return x ? `${nm} ${pct(x.rate)}` : ''; }).filter(Boolean).join(' · ') : '';
     body = `<div style="font-size:19px;font-weight:700">${esc(l.plan)}</div><div>${esc(l.addr)}</div><div class="muted">${esc(l.size)}</div>
-      <div class="row"><span style="font-size:24px;font-weight:700">${money(l.price)}</span><span class="muted small">${l.ms ? 'Stage M' + esc(l.ms) : 'Not started'}</span></div>
+      <div class="row"><span style="font-size:24px;font-weight:700">${money(l.price)}</span>${(() => { const e = buildEta(l); return e ? `<span class="eta ${e.kind}">${e.text}</span><span class="muted small">${e.sub}</span>` : ''; })()}</div>
       <div class="small">${ms ? `BFC: ${monthsText(ms)} closing${rl ? ' · ' + rl : ' · rate not set yet'}` : '<span class="muted">Not on a BFC list</span>'}</div>
       ${bd ? `<div><span class="badge" style="background:var(--amber-soft);color:var(--amber-ink)">${bdName()} buydown special</span></div>` : ''}
       <div class="row"><a class="btn" href="#/plan/${encodeURIComponent(l.plan)}">Floor plan</a><button class="btn primary" data-a="paylot" data-n="${n}">Payment compare</button></div>`;
@@ -718,6 +740,13 @@ VIEWS.settings = () => {
       <div class="grid g4">${PROGS.map(([p, nm]) => num(`bd_${p}`, bdo[p], `Note rate · ${nm} %`)).join('')}</div>
       <div class="muted small">Leave a note rate blank to use that home’s BFC rate, or today’s rate if it isn’t on a BFC list.</div>
       <div class="row"><button class="btn primary" data-a="savebuydown">Save buydown</button><button class="btn" data-a="resetbuydown">Reset to built-in</button></div></section>
+    <section class="card" style="display:flex;flex-direction:column;gap:12px"><b style="font-size:18px">Build timeline</b>
+      <div class="muted small">Used for each home’s estimated completion month. Construction days are spread evenly over stages M01–M13 and counted from the inventory pull date (${usDate(invAsOf())}).</div>
+      <div class="grid g4"><label class="f">Construction, M01–M13 (days)<input type="number" inputmode="numeric" id="tl_days" value="${timeline().days}"></label>
+        <label class="f">Permits, M00 (weeks)<input type="text" inputmode="numeric" id="tl_permit" value="${timeline().permitWks.join('–')}"></label>
+        <label class="f">30-day close from stage<input type="number" inputmode="numeric" id="tl_quick" value="${timeline().quick}"></label>
+        <label class="f">No permit yet (months)<input type="text" inputmode="numeric" id="tl_pre" value="${timeline().presaleMos.join('–')}"></label></div>
+      <div class="row"><button class="btn primary" data-a="savetl">Save</button><button class="btn" data-a="resettl">Reset to built-in</button></div></section>
     <section class="card" style="display:flex;flex-direction:column;gap:12px"><b style="font-size:18px">Closing cost help</b>
       <div class="muted small">What the builder gives toward closing. Homes for sale are the ones management lists (being built or done). Presales can’t lock a rate, so they get more to buy the rate down at closing. Update these when the email comes out.</div>
       <div class="grid g4"><label class="f">Homes for sale · up to $<input type="number" inputmode="numeric" step="500" id="cc_sale" value="${cc().forSale || ''}"></label><label class="f">Presales · up to $<input type="number" inputmode="numeric" step="500" id="cc_pre" value="${cc().presale || ''}"></label></div>
@@ -988,7 +1017,7 @@ async function importCSV(e) {
   } else if (rows.length && 'Lot #' in rows[0]) {
     let n = 0;
     rows.forEach((r) => { const k = String(+r['Lot #']); if (cur[k] && cur[k].c === 'spec') { cur[k].ms = r.Milestone || ''; cur[k].price = Math.round(+r.Price || cur[k].price); const fx = (D.sizeFix || {})[cur[k].plan] || [r.Beds, r.Baths]; cur[k].size = `${fx[0]} bd · ${fx[1]} ba · ${(+r.Sqft).toLocaleString('en-US')} sq ft`; n++; } });
-    LS.set('lots', { asOf: lotsAsOf(), lots: cur });
+    LS.set('lots', { asOf: lotsAsOf(), lots: cur }); LS.set('invAsOf', today());
     msg.textContent = `Updated build stages and prices on ${n} homes from the inventory pull.`;
   } else {
     msg.textContent = 'That file doesn’t look like a homesales or inventory CSV.';
@@ -1055,6 +1084,13 @@ const A = {
   resetbuydown: () => { LS.del('buydown'); rerender(); toast('Back to the built-in buydown'); },
   savecc: () => { LS.set('cc', { forSale: +document.getElementById('cc_sale').value || 0, presale: +document.getElementById('cc_pre').value || 0 }); toast('Closing cost help saved'); },
   resetcc: () => { LS.del('cc'); rerender(); toast('Back to built-in amounts'); },
+  savetl: () => {
+    const pair = (id, d) => { const v = document.getElementById(id).value.split(/[^0-9]+/).filter(Boolean).map(Number); return v.length >= 2 ? [v[0], v[1]] : (v.length ? [v[0], v[0]] : d); };
+    const t = timeline();
+    LS.set('timeline', { days: +document.getElementById('tl_days').value || t.days, permitWks: pair('tl_permit', t.permitWks), quick: +document.getElementById('tl_quick').value || t.quick, presaleMos: pair('tl_pre', t.presaleMos) });
+    toast('Build timeline saved');
+  },
+  resettl: () => { LS.del('timeline'); rerender(); toast('Back to the built-in timeline'); },
   vk: (t) => { S.pay.vk = t.dataset.k; rerender(); },
   saveagent: () => { LS.set('agent', { name: document.getElementById('a_name').value.trim(), license: document.getElementById('a_lic').value.trim(), firm: document.getElementById('a_firm').value.trim(), rel: Array.from(document.querySelectorAll('.a_rel:checked')).map((x) => x.value) }); toast('Saved'); },
   resetlots: () => { LS.del('lots'); rerender(); toast('Back to built-in lots'); },

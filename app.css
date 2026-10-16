@@ -172,6 +172,10 @@ table.vtable th[scope="row"] { text-align: left; font-weight: 500; }
 table.vtable thead th { border-top: 0; font-size: 13px; color: var(--muted); font-weight: 600; }
 table.vtable thead th:first-child { text-align: left; }
 table.vtable tr.keep th, table.vtable tr.keep td { font-weight: 700; }
+.eta { display: inline-block; font-size: 12px; font-weight: 650; padding: 2px 8px; border-radius: 6px; background: var(--line2); color: var(--ink2); white-space: nowrap; }
+.eta.quick { background: #E3F3E7; color: #145C29; }
+.eta.build { background: var(--blue-soft); color: var(--blue-ink); }
+.eta.permit, .eta.presale { background: var(--amber-soft); color: var(--amber-ink); }
 .ccline { padding: 10px 14px; border-radius: 12px; background: var(--bg); font-size: 15px; color: var(--ink2); }
 .bfcm { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; background: var(--bg); border-radius: 12px; }
 .legal { font-size: 11px; line-height: 1.5; color: var(--ink2); white-space: pre-line; }

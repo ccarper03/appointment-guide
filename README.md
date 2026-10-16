@@ -29,6 +29,7 @@ Open **Settings** from the menu footer.
 | Today's rates | Rates: copy Conventional, FHA and VA from the drhorton.com calculator on any home. |
 | BFC rates or lists | Builder rates (BFC) by closing month: FHA, VA and Conv rates plus the lots on each month's list. The next 3 months show on their own and roll forward; a new month shows up blank until you fill it. |
 | Buydown special | Buydown special: the type (2/1, 3/2/1 or 1/0), the lot(s) management picked, the note rate per program (blank uses the home's BFC rate), and the close-by date. |
+| Build timeline | Build timeline: construction days for M01–M13 (100), permit weeks for M00 (6–10), the 30-day-close stage (M09) and the no-permit quote (5–7 months). Completion months count from the inventory pull date. |
 | Closing cost help | Closing cost help: up to $ for homes for sale (being built or done) and up to $ for presales. Presale quotes (custom price, open lots) never get BFC or the buydown. |
 | Lot statuses | Update lots: import the CSV from the homesales console snippet. |
 | Build stages, prices | Update lots: import your inventory pull CSV. |
